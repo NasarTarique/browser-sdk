@@ -11,18 +11,16 @@ export function relativeToClocks(relative: RelativeTime) {
 }
 
 function getCorrectedTimeStamp(relativeTime: RelativeTime) {
-  const correctedOrigin = Date.now() - performance.now()
+  const correctedOrigin = (dateNow() - performance.now()) as TimeStamp
   // apply correction only for positive drift
   if (correctedOrigin > getNavigationStart()) {
-    // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-    return Math.round(correctedOrigin + relativeTime) as TimeStamp
+    return Math.round(addDuration(correctedOrigin, relativeTime)) as TimeStamp
   }
   return getTimeStamp(relativeTime)
 }
 
 export function currentDrift() {
-  // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-  return Math.round(Date.now() - (getNavigationStart() + performance.now()))
+  return Math.round(dateNow() - addDuration(getNavigationStart(), performance.now() as Duration))
 }
 
 export function toServerDuration(duration: Duration): ServerDuration
@@ -34,8 +32,17 @@ export function toServerDuration(duration: Duration | undefined) {
   return round(duration * 1e6, 0) as ServerDuration
 }
 
+export function dateNow() {
+  // Do not use `Date.now` because sometimes websites are wrongly "polyfilling" it. For example, we
+  // had some users using a very old version of `datejs`, which patched `Date.now` to return a Date
+  // instance instead of a timestamp[1]. Those users are unlikely to fix this, so let's handle this
+  // case ourselves.
+  // [1]: https://github.com/datejs/Datejs/blob/97f5c7c58c5bc5accdab8aa7602b6ac56462d778/src/core-debug.js#L14-L16
+  return new Date().getTime()
+}
+
 export function timeStampNow() {
-  return Date.now() as TimeStamp
+  return dateNow() as TimeStamp
 }
 
 export function relativeNow() {
@@ -56,6 +63,13 @@ export function elapsed(start: number, end: number) {
   return (end - start) as Duration
 }
 
+export function addDuration(a: TimeStamp, b: Duration): TimeStamp
+export function addDuration(a: RelativeTime, b: Duration): RelativeTime
+export function addDuration(a: Duration, b: Duration): Duration
+export function addDuration(a: number, b: number) {
+  return a + b
+}
+
 /**
  * Get the time since the navigation was started.
  *
@@ -68,8 +82,7 @@ export function getRelativeTime(timestamp: TimeStamp) {
 }
 
 export function getTimeStamp(relativeTime: RelativeTime) {
-  // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-  return Math.round(getNavigationStart() + relativeTime) as TimeStamp
+  return Math.round(addDuration(getNavigationStart(), relativeTime)) as TimeStamp
 }
 
 export function looksLikeRelativeTime(time: RelativeTime | TimeStamp): time is RelativeTime {

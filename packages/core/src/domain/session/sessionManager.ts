@@ -1,12 +1,15 @@
-import { CookieOptions } from '../../browser/cookie'
-import { Observable } from '../../tools/observable'
+import type { CookieOptions } from '../../browser/cookie'
+import type { Observable } from '../../tools/observable'
 import * as utils from '../../tools/utils'
-import { monitor } from '../internalMonitoring'
-import { Context } from '../../tools/context'
+import type { Context } from '../../tools/context'
 import { ContextHistory } from '../../tools/contextHistory'
-import { relativeNow, RelativeTime, clocksOrigin } from '../../tools/timeUtils'
+import type { RelativeTime } from '../../tools/timeUtils'
+import { relativeNow, clocksOrigin } from '../../tools/timeUtils'
+import { monitor } from '../../tools/monitor'
+import { DOM_EVENT, addEventListener, addEventListeners } from '../../browser/addEventListener'
 import { tryOldCookiesMigration } from './oldCookiesMigration'
-import { startSessionStore, SESSION_TIME_OUT_DELAY } from './sessionStore'
+import { startSessionStore } from './sessionStore'
+import { SESSION_TIME_OUT_DELAY } from './sessionConstants'
 
 export interface SessionManager<TrackingType extends string> {
   findActiveSession: (startTime?: RelativeTime) => SessionContext<TrackingType> | undefined
@@ -36,14 +39,14 @@ export function startSessionManager<TrackingType extends string>(
   stopCallbacks.push(() => sessionContextHistory.stop())
 
   sessionStore.renewObservable.subscribe(() => {
-    sessionContextHistory.setCurrent(buildSessionContext(), relativeNow())
+    sessionContextHistory.add(buildSessionContext(), relativeNow())
   })
   sessionStore.expireObservable.subscribe(() => {
-    sessionContextHistory.closeCurrent(relativeNow())
+    sessionContextHistory.closeActive(relativeNow())
   })
 
   sessionStore.expandOrRenewSession()
-  sessionContextHistory.setCurrent(buildSessionContext(), clocksOrigin().relative)
+  sessionContextHistory.add(buildSessionContext(), clocksOrigin().relative)
 
   trackActivity(() => sessionStore.expandOrRenewSession())
   trackVisibility(() => sessionStore.expandSession())
@@ -68,9 +71,9 @@ export function stopSessionManager() {
 }
 
 function trackActivity(expandOrRenewSession: () => void) {
-  const { stop } = utils.addEventListeners(
+  const { stop } = addEventListeners(
     window,
-    [utils.DOM_EVENT.CLICK, utils.DOM_EVENT.TOUCH_START, utils.DOM_EVENT.KEY_DOWN, utils.DOM_EVENT.SCROLL],
+    [DOM_EVENT.CLICK, DOM_EVENT.TOUCH_START, DOM_EVENT.KEY_DOWN, DOM_EVENT.SCROLL],
     expandOrRenewSession,
     { capture: true, passive: true }
   )
@@ -84,7 +87,7 @@ function trackVisibility(expandSession: () => void) {
     }
   })
 
-  const { stop } = utils.addEventListener(document, utils.DOM_EVENT.VISIBILITY_CHANGE, expandSessionWhenVisible)
+  const { stop } = addEventListener(document, DOM_EVENT.VISIBILITY_CHANGE, expandSessionWhenVisible)
   stopCallbacks.push(stop)
 
   const visibilityCheckInterval = setInterval(expandSessionWhenVisible, VISIBILITY_CHECK_DELAY)

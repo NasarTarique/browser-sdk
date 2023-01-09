@@ -1,23 +1,34 @@
-import { LogsInitConfiguration } from '@datadog/browser-logs'
-import { RumInitConfiguration } from '@datadog/browser-rum-core'
-import { deleteAllCookies, withBrowserLogs } from '../helpers/browser'
-import { flushEvents } from '../helpers/flushEvents'
-import { validateFormat } from '../helpers/validation'
+import type { LogsInitConfiguration } from '@datadog/browser-logs'
+import type { RumInitConfiguration } from '@datadog/browser-rum-core'
+import { getRunId } from '../../../utils'
+import { deleteAllCookies, getBrowserName, withBrowserLogs } from '../helpers/browser'
+import { APPLICATION_ID, CLIENT_TOKEN } from '../helpers/constants'
+import { validateRumFormat } from '../helpers/validation'
 import { EventRegistry } from './eventsRegistry'
-import { getTestServers, Servers, waitForServersIdle } from './httpServers'
+import { flushEvents } from './flushEvents'
+import type { Servers } from './httpServers'
+import { getTestServers, waitForServersIdle } from './httpServers'
 import { log } from './logger'
-import { DEFAULT_SETUPS, npmSetup, SetupFactory, SetupOptions } from './pageSetups'
+import type { SetupFactory, SetupOptions } from './pageSetups'
+import { DEFAULT_SETUPS, npmSetup } from './pageSetups'
 import { createIntakeServerApp } from './serverApps/intake'
 import { createMockServerApp } from './serverApps/mock'
 
 const DEFAULT_RUM_CONFIGURATION = {
-  applicationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-  clientToken: 'token',
+  applicationId: APPLICATION_ID,
+  clientToken: CLIENT_TOKEN,
+  sessionReplaySampleRate: 100,
+  trackResources: true,
+  trackLongTasks: true,
+  telemetrySampleRate: 100,
+  telemetryConfigurationSampleRate: 100,
   enableExperimentalFeatures: [],
 }
 
 const DEFAULT_LOGS_CONFIGURATION = {
-  clientToken: 'token',
+  clientToken: CLIENT_TOKEN,
+  telemetrySampleRate: 100,
+  telemetryConfigurationSampleRate: 100,
 }
 
 export function createTest(title: string) {
@@ -29,6 +40,7 @@ interface TestContext {
   crossOriginUrl: string
   serverEvents: EventRegistry
   bridgeEvents: EventRegistry
+  servers: Servers
 }
 
 type TestRunner = (testContext: TestContext) => Promise<void>
@@ -96,8 +108,13 @@ class TestBuilder {
       logs: this.logsConfiguration,
       rum: this.rumConfiguration,
       rumInit: this.rumInit,
+      logsInit: this.logsInit,
       useRumSlim: false,
       eventBridge: this.eventBridge,
+      context: {
+        run_id: getRunId(),
+        test_name: '<PLACEHOLDER>',
+      },
     }
 
     if (this.alsoRunWithRumSlim) {
@@ -117,6 +134,10 @@ class TestBuilder {
 
   private rumInit: (configuration: RumInitConfiguration) => void = (configuration) => {
     window.DD_RUM!.init(configuration)
+  }
+
+  private logsInit: (configuration: LogsInitConfiguration) => void = (configuration) => {
+    window.DD_LOGS!.init(configuration)
   }
 }
 
@@ -144,7 +165,9 @@ function declareTestsForSetups(
 
 function declareTest(title: string, setupOptions: SetupOptions, factory: SetupFactory, runner: TestRunner) {
   const spec = it(title, async () => {
-    log(`Start '${spec.getFullName()}' in ${getBrowserName()!}`)
+    log(`Start '${spec.getFullName()}' in ${getBrowserName()}`)
+    setupOptions.context.test_name = spec.getFullName()
+
     const servers = await getTestServers()
 
     const testContext = createTestContext(servers)
@@ -165,17 +188,13 @@ function declareTest(title: string, setupOptions: SetupOptions, factory: SetupFa
   })
 }
 
-function getBrowserName() {
-  const capabilities = browser.options.capabilities
-  return capabilities && ((capabilities.browserName || (capabilities as any).browser) as string)
-}
-
 function createTestContext(servers: Servers): TestContext {
   return {
     baseUrl: servers.base.url,
     crossOriginUrl: servers.crossOrigin.url,
     serverEvents: new EventRegistry(),
     bridgeEvents: new EventRegistry(),
+    servers,
   }
 }
 
@@ -186,9 +205,9 @@ async function setUpTest({ baseUrl }: TestContext) {
 
 async function tearDownTest({ serverEvents, bridgeEvents }: TestContext) {
   await flushEvents()
-  expect(serverEvents.internalMonitoring).toEqual([])
-  validateFormat(serverEvents.rum)
-  validateFormat(bridgeEvents.rum)
+  expect(serverEvents.telemetryErrors).toEqual([])
+  validateRumFormat(serverEvents.rum)
+  validateRumFormat(bridgeEvents.rum)
   await withBrowserLogs((logs) => {
     logs.forEach((browserLog) => {
       log(`Browser ${browserLog.source}: ${browserLog.level} ${browserLog.message}`)

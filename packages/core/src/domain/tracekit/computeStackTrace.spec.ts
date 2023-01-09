@@ -1,6 +1,6 @@
 import { isSafari } from '../../../test/specHelper'
 import * as CapturedExceptions from '../../../test/capturedExceptions'
-import { computeStackTrace, computeStackTraceFromStackProp, computeStackTraceOfCaller } from './computeStackTrace'
+import { computeStackTrace } from './computeStackTrace'
 
 describe('computeStackTrace', () => {
   it('should not remove anonymous functions from the stack', () => {
@@ -15,7 +15,7 @@ describe('computeStackTrace', () => {
     at http://example.com/js/test.js:67:5
     at namedFunc4 (http://example.com/js/script.js:100001:10002)`
     const mockErr: any = { stack }
-    const stackFrames = computeStackTraceFromStackProp(mockErr)!
+    const stackFrames = computeStackTrace(mockErr)!
 
     expect(stackFrames.stack[0].func).toEqual('new <anonymous>')
     expect(stackFrames.stack[0].url).toEqual('http://example.com/js/test.js')
@@ -56,7 +56,7 @@ ReferenceError: baz is not defined
 `
 
     const mockErr: any = { stack }
-    const stackFrames = computeStackTraceFromStackProp(mockErr)!
+    const stackFrames = computeStackTrace(mockErr)!
 
     expect(stackFrames.stack[0].func).toEqual('bar')
     expect(stackFrames.stack[0].url).toEqual('http://example.com/js/test.js')
@@ -124,14 +124,19 @@ Error: foo
     }
 
     function baz() {
-      return computeStackTraceOfCaller()
+      try {
+        // Throw error for IE
+        throw new Error()
+      } catch (ex) {
+        return computeStackTrace(ex)
+      }
     }
 
     const trace = foo()
     const expected = ['baz', 'bar', 'foo']
 
-    for (let i = 1; i <= 3; i += 1) {
-      expect(trace.stack[i].func).toEqual(expected[i - 1])
+    for (let i = 0; i <= 2; i += 1) {
+      expect(trace.stack[i].func).toEqual(expected[i])
     }
   })
 
@@ -463,6 +468,66 @@ Error: foo
     })
   })
 
+  it('should parse Chrome error that only contain file name, with no path prefix', () => {
+    const stack = `Error: RTE Simulation
+    at foo$bar$oof$rab (events.cljs:1060:12)
+    at func1$func2$func3$func4 (std_interceptors.js:128:19)
+    at eval (std_interceptors.jsx:132:29)`
+
+    const stackFrames = computeStackTrace({ stack } as Error)
+    expect(stackFrames.stack.length).toEqual(3)
+    expect(stackFrames.stack[0]).toEqual({
+      args: [],
+      column: 12,
+      func: 'foo$bar$oof$rab',
+      line: 1060,
+      url: 'events.cljs',
+    })
+    expect(stackFrames.stack[1]).toEqual({
+      args: [],
+      column: 19,
+      func: 'func1$func2$func3$func4',
+      line: 128,
+      url: 'std_interceptors.js',
+    })
+    expect(stackFrames.stack[2]).toEqual({
+      args: [],
+      column: 29,
+      func: 'eval',
+      line: 132,
+      url: 'std_interceptors.jsx',
+    })
+  })
+
+  it('should not include error message into stacktrace ', () => {
+    const stackFrames = computeStackTrace(new Error('bar@http://path/to/file.js:1:1'))
+
+    expect(stackFrames.stack[0]?.url).not.toBe('http://path/to/file.js')
+  })
+
+  it('should parse Chrome anonymous function errors', () => {
+    const stack = `Error: RTE Simulation
+    at https://datadoghq.com/somefile.js:8489:191
+    at chrome-extension://<id>/content/index.js:85:37379`
+
+    const stackFrames = computeStackTrace({ stack } as Error)
+    expect(stackFrames.stack.length).toEqual(2)
+    expect(stackFrames.stack[0]).toEqual({
+      args: [],
+      column: 191,
+      func: '?',
+      line: 8489,
+      url: 'https://datadoghq.com/somefile.js',
+    })
+    expect(stackFrames.stack[1]).toEqual({
+      args: [],
+      column: 37379,
+      func: '?',
+      line: 85,
+      url: 'chrome-extension://<id>/content/index.js',
+    })
+  })
+
   it('should parse Chrome 15 error', () => {
     const stackFrames = computeStackTrace(CapturedExceptions.CHROME_15 as any)
 
@@ -738,369 +803,6 @@ Error: foo
     })
   })
 
-  it('should parse Opera 8.54 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_854 as any)
-
-    expect(stackFrames.stack.length).toEqual(7)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    this.undef();'],
-      func: '?',
-      line: 44,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    ex = ex || this.createException();'],
-      func: '?',
-      line: 31,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    var p = new printStackTrace.implementation(), result = p.run(ex);'],
-      func: '?',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[3]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    printTrace(printStackTrace());'],
-      func: '?',
-      line: 4,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[4]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(n - 1);'],
-      func: '?',
-      line: 7,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[5]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(2);'],
-      func: '?',
-      line: 11,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[6]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    foo();'],
-      func: '?',
-      line: 15,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 9.02 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_902 as any)
-
-    expect(stackFrames.stack.length).toEqual(7)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    this.undef();'],
-      func: '?',
-      line: 44,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    ex = ex || this.createException();'],
-      func: '?',
-      line: 31,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    var p = new printStackTrace.implementation(), result = p.run(ex);'],
-      func: '?',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[3]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    printTrace(printStackTrace());'],
-      func: '?',
-      line: 4,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[4]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(n - 1);'],
-      func: '?',
-      line: 7,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[5]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(2);'],
-      func: '?',
-      line: 11,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[6]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    foo();'],
-      func: '?',
-      line: 15,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 9.27 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_927 as any)
-
-    expect(stackFrames.stack.length).toEqual(3)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(n - 1);'],
-      func: '?',
-      line: 43,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    bar(2);'],
-      func: '?',
-      line: 31,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['    foo();'],
-      func: '?',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 9.64 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_964 as any)
-
-    expect(stackFrames.stack.length).toEqual(6)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['            ex = ex || this.createException();'],
-      func: '?',
-      line: 27,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['        var p = new printStackTrace.implementation(), result = p.run(ex);'],
-      func: 'printStackTrace',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['             printTrace(printStackTrace());'],
-      func: 'bar',
-      line: 4,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[3]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['           bar(n - 1);'],
-      func: 'bar',
-      line: 7,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[4]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['           bar(2);'],
-      func: 'foo',
-      line: 11,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[5]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['         foo();'],
-      func: '?',
-      line: 15,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 10 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_10 as any)
-
-    expect(stackFrames.stack.length).toEqual(7)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['                this.undef();'],
-      func: '?',
-      line: 42,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['            ex = ex || this.createException();'],
-      func: '?',
-      line: 27,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['        var p = new printStackTrace.implementation(), result = p.run(ex);'],
-      func: 'printStackTrace',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[3]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['             printTrace(printStackTrace());'],
-      func: 'bar',
-      line: 4,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[4]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['           bar(n - 1);'],
-      func: 'bar',
-      line: 7,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[5]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['           bar(2);'],
-      func: 'foo',
-      line: 11,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[6]).toEqual({
-      args: [],
-      column: undefined,
-      context: ['         foo();'],
-      func: '?',
-      line: 15,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 11 error', () => {
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_11 as any)
-
-    expect(stackFrames.stack.length).toEqual(7)
-    expect(stackFrames.stack[0]).toEqual({
-      args: [],
-      column: 12,
-      context: ['    this.undef();'],
-      func: 'createException',
-      line: 42,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: ['ex'],
-      column: 8,
-      context: ['    ex = ex || this.createException();'],
-      func: 'run',
-      line: 27,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: ['options'],
-      column: 4,
-      context: ['    var p = new printStackTrace.implementation(), result = p.run(ex);'],
-      func: 'printStackTrace',
-      line: 18,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[3]).toEqual({
-      args: ['n'],
-      column: 5,
-      context: ['    printTrace(printStackTrace());'],
-      func: 'bar',
-      line: 4,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[4]).toEqual({
-      args: ['n'],
-      column: 4,
-      context: ['    bar(n - 1);'],
-      func: 'bar',
-      line: 7,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[5]).toEqual({
-      args: [],
-      column: 4,
-      context: ['    bar(2);'],
-      func: 'foo',
-      line: 11,
-      url: 'http://path/to/file.js',
-    })
-    expect(stackFrames.stack[6]).toEqual({
-      args: [],
-      column: 3,
-      context: ['    foo();'],
-      func: '?',
-      line: 15,
-      url: 'http://path/to/file.js',
-    })
-  })
-
-  it('should parse Opera 12 error', () => {
-    // TODO: Improve anonymous function name.
-    const stackFrames = computeStackTrace(CapturedExceptions.OPERA_12 as any)
-
-    expect(stackFrames.stack.length).toEqual(3)
-    expect(stackFrames.stack[0]).toEqual({
-      args: ['x'],
-      column: 12,
-      context: ['    x.undef();'],
-      func: '<anonymous function>',
-      line: 48,
-      url: 'http://localhost:8000/ExceptionLab.html',
-    })
-    expect(stackFrames.stack[1]).toEqual({
-      args: [],
-      column: 8,
-      context: ['    dumpException((function(x) {'],
-      func: 'dumpException3',
-      line: 46,
-      url: 'http://localhost:8000/ExceptionLab.html',
-    })
-    expect(stackFrames.stack[2]).toEqual({
-      args: ['event'],
-      column: 0,
-      context: ['    dumpException3();'],
-      func: '<anonymous function>',
-      line: 1,
-      url: 'http://localhost:8000/ExceptionLab.html',
-    })
-  })
-
   it('should parse Opera 25 error', () => {
     const stackFrames = computeStackTrace(CapturedExceptions.OPERA_25)
 
@@ -1225,9 +927,7 @@ Error: foo
       column: 41,
       func: 'this',
       line: 74,
-      url:
-        // eslint-disable-next-line  max-len
-        '/home/username/sample-workspace/sampleapp.collect.react/node_modules/react-native/Libraries/Renderer/src/renderers/native/ReactNativeBaseComponent.js',
+      url: '/home/username/sample-workspace/sampleapp.collect.react/node_modules/react-native/Libraries/Renderer/src/renderers/native/ReactNativeBaseComponent.js',
     })
   })
 

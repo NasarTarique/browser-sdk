@@ -1,25 +1,25 @@
-import { EndpointBuilder } from '../src/domain/configuration'
+import type { EndpointBuilder } from '../src/domain/configuration'
 import { instrumentMethod } from '../src/tools/instrumentMethod'
 import { resetNavigationStart } from '../src/tools/timeUtils'
 import { buildUrl } from '../src/tools/urlPolyfill'
 import { noop, objectEntries, assign } from '../src/tools/utils'
-import { BrowserWindowWithEventBridge } from '../src/transport'
+import type { BrowserWindowWithEventBridge } from '../src/transport'
+
+// to simulate different build env behavior
+export interface BuildEnvWindow {
+  __BUILD_ENV__SDK_VERSION__: string
+}
 
 export function stubEndpointBuilder(url: string) {
-  return { build: () => url } as EndpointBuilder
+  return { build: (_: any) => url } as EndpointBuilder
 }
 
 export const SPEC_ENDPOINTS = {
-  internalMonitoringEndpointBuilder: stubEndpointBuilder('https://monitoring-intake.com/v1/input/abcde?foo=bar'),
   logsEndpointBuilder: stubEndpointBuilder('https://logs-intake.com/v1/input/abcde?foo=bar'),
   rumEndpointBuilder: stubEndpointBuilder('https://rum-intake.com/v1/input/abcde?foo=bar'),
 
   isIntakeUrl: (url: string) => {
-    const intakeUrls = [
-      'https://monitoring-intake.com/v1/input/',
-      'https://logs-intake.com/v1/input/',
-      'https://rum-intake.com/v1/input/',
-    ]
+    const intakeUrls = ['https://logs-intake.com/v1/input/', 'https://rum-intake.com/v1/input/']
     return intakeUrls.some((intakeUrl) => url.indexOf(intakeUrl) === 0)
   },
 }
@@ -106,27 +106,14 @@ export function stubFetch(): FetchStubManager {
 
   window.fetch = (() => {
     pendingRequests += 1
-    let resolve: (response: ResponseStub) => unknown
+    let resolve: (response: Response) => unknown
     let reject: (error: Error) => unknown
-    const promise = (new Promise((res, rej) => {
+    const promise = new Promise((res, rej) => {
       resolve = res
       reject = rej
-    }) as unknown) as FetchStubPromise
-    promise.resolveWith = (response: ResponseStub) => {
-      resolve({
-        ...response,
-        clone: () => {
-          const cloned = {
-            text: () => {
-              if (response.responseTextError) {
-                return Promise.reject(response.responseTextError)
-              }
-              return Promise.resolve(response.responseText)
-            },
-          }
-          return cloned as Response
-        },
-      })
+    }) as unknown as FetchStubPromise
+    promise.resolveWith = (responseOptions: ResponseStubOptions) => {
+      resolve(new ResponseStub(responseOptions))
       onRequestEnd()
     }
     promise.rejectWith = (error: Error) => {
@@ -151,15 +138,99 @@ export function stubFetch(): FetchStubManager {
   }
 }
 
-export interface ResponseStub extends Partial<Response> {
+export interface ResponseStubOptions {
+  status?: number
+  method?: string
+  type?: ResponseType
   responseText?: string
   responseTextError?: Error
+  body?: ReadableStream<Uint8Array>
+}
+function notYetImplemented(): never {
+  throw new Error('not yet implemented')
+}
+
+export class ResponseStub implements Response {
+  private _body: ReadableStream<Uint8Array> | undefined
+
+  constructor(private options: Readonly<ResponseStubOptions>) {
+    if (this.options.body) {
+      this._body = this.options.body
+    } else if (this.options.responseTextError !== undefined) {
+      this._body = new ReadableStream({
+        start: (controller) => {
+          controller.error(this.options.responseTextError)
+        },
+      })
+    } else if (this.options.responseText !== undefined) {
+      this._body = new ReadableStream({
+        start: (controller) => {
+          controller.enqueue(new TextEncoder().encode(this.options.responseText))
+          controller.close()
+        },
+      })
+    }
+  }
+
+  get status() {
+    return this.options.status ?? 200
+  }
+
+  get method() {
+    return this.options.method ?? 'GET'
+  }
+
+  get type() {
+    return this.options.type ?? 'basic'
+  }
+
+  get bodyUsed() {
+    return this._body ? this._body.locked : false
+  }
+
+  get body() {
+    return this._body || null
+  }
+
+  clone() {
+    if (this.bodyUsed) {
+      throw new TypeError("Failed to execute 'clone' on 'Response': Response body is already used")
+    }
+    return new ResponseStub(this.options)
+  }
+
+  // Partial implementation, feel free to implement
+  /* eslint-disable @typescript-eslint/member-ordering */
+  arrayBuffer = notYetImplemented
+  text = notYetImplemented
+  blob = notYetImplemented
+  formData = notYetImplemented
+  json = notYetImplemented
+  /* eslint-enable @typescript-eslint/member-ordering */
+  get ok() {
+    return notYetImplemented()
+  }
+  get headers() {
+    return notYetImplemented()
+  }
+  get redirected() {
+    return notYetImplemented()
+  }
+  get statusText() {
+    return notYetImplemented()
+  }
+  get trailer() {
+    return notYetImplemented()
+  }
+  get url() {
+    return notYetImplemented()
+  }
 }
 
 export type FetchStub = (input: RequestInfo, init?: RequestInit) => FetchStubPromise
 
 export interface FetchStubPromise extends Promise<Response> {
-  resolveWith: (response: ResponseStub) => void
+  resolveWith: (response: ResponseStubOptions) => void
   rejectWith: (error: Error) => void
   abort: () => void
 }
@@ -192,6 +263,7 @@ class StubEventEmitter {
 }
 
 class StubXhr extends StubEventEmitter {
+  public static onSend: (xhr: StubXhr) => void | undefined
   public response: string | undefined = undefined
   public status: number | undefined = undefined
   public readyState: number = XMLHttpRequest.UNSENT
@@ -199,12 +271,14 @@ class StubXhr extends StubEventEmitter {
 
   private hasEnded = false
 
-  /* eslint-disable @typescript-eslint/no-empty-function,@typescript-eslint/no-unused-vars */
-  open(method: string, url: string) {
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  open(method: string, url: string | URL | undefined | null) {
     this.hasEnded = false
   }
 
-  send() {}
+  send() {
+    StubXhr.onSend?.(this)
+  }
 
   abort() {
     this.status = 0
@@ -240,6 +314,8 @@ class StubXhr extends StubEventEmitter {
   }
 }
 
+export function createNewEvent<P extends Record<string, unknown>>(eventName: 'click', properties?: P): MouseEvent & P
+export function createNewEvent(eventName: string, properties?: { [name: string]: unknown }): Event
 export function createNewEvent(eventName: string, properties: { [name: string]: unknown } = {}) {
   let event: Event
   if (typeof Event === 'function') {
@@ -286,7 +362,7 @@ export function withXhr({
     })
   }
   xhr.addEventListener('loadend', loadend)
-  setup((xhr as unknown) as StubXhr)
+  setup(xhr as unknown as StubXhr)
 }
 
 export function setPageVisibility(visibility: 'visible' | 'hidden') {
@@ -302,9 +378,22 @@ export function restorePageVisibility() {
   delete (document as any).visibilityState
 }
 
+export function setNavigatorOnLine(onLine: boolean) {
+  Object.defineProperty(navigator, 'onLine', {
+    get() {
+      return onLine
+    },
+    configurable: true,
+  })
+}
+
+export function restoreNavigatorOnLine() {
+  delete (navigator as any).onLine
+}
+
 export function initEventBridgeStub(allowedWebViewHosts: string[] = [window.location.hostname]) {
   const eventBridgeStub = {
-    send: () => undefined,
+    send: (msg: string) => undefined,
     getAllowedWebViewHosts: () => JSON.stringify(allowedWebViewHosts),
   }
   ;(window as BrowserWindowWithEventBridge).DatadogEventBridge = eventBridgeStub
@@ -325,4 +414,91 @@ export function disableJasmineUncaughtErrorHandler() {
   return {
     reset: stop,
   }
+}
+
+export function stubCookie() {
+  let cookie = ''
+  return {
+    getSpy: spyOnProperty(Document.prototype, 'cookie', 'get').and.callFake(() => cookie),
+    setSpy: spyOnProperty(Document.prototype, 'cookie', 'set').and.callFake((newCookie) => {
+      cookie = newCookie
+    }),
+    currentValue: () => cookie,
+    setCurrentValue: (newCookie: string) => {
+      cookie = newCookie
+    },
+  }
+}
+
+export interface Request {
+  type: 'xhr' | 'sendBeacon' | 'fetch'
+  url: string
+  body: string
+}
+
+export function interceptRequests() {
+  const requests: Request[] = []
+  const originalSendBeacon = isSendBeaconSupported() && navigator.sendBeacon.bind(navigator)
+  const originalRequest = window.Request
+  const originalFetch = window.fetch
+  let stubXhrManager: { reset(): void } | undefined
+
+  spyOn(XMLHttpRequest.prototype, 'open').and.callFake((_, url) => requests.push({ type: 'xhr', url } as Request))
+  spyOn(XMLHttpRequest.prototype, 'send').and.callFake((body) => (requests[requests.length - 1].body = body as string))
+  if (isSendBeaconSupported()) {
+    spyOn(navigator, 'sendBeacon').and.callFake((url, body) => {
+      requests.push({ type: 'sendBeacon', url: url as string, body: body as string })
+      return true
+    })
+  }
+  if (isFetchKeepAliveSupported()) {
+    spyOn(window, 'fetch').and.callFake((url, config) => {
+      requests.push({ type: 'fetch', url: url as string, body: config!.body as string })
+      return new Promise<Response>(() => undefined)
+    })
+  }
+
+  function isSendBeaconSupported() {
+    return !!navigator.sendBeacon
+  }
+
+  function isFetchKeepAliveSupported() {
+    return 'fetch' in window && 'keepalive' in new window.Request('')
+  }
+
+  return {
+    requests,
+    isSendBeaconSupported,
+    isFetchKeepAliveSupported,
+    withSendBeacon(newSendBeacon: any) {
+      navigator.sendBeacon = newSendBeacon
+    },
+    withRequest(newRequest: any) {
+      window.Request = newRequest
+    },
+    withFetch(newFetch: any) {
+      window.fetch = newFetch
+    },
+    withStubXhr(onSend: (xhr: StubXhr) => void) {
+      stubXhrManager = stubXhr()
+      StubXhr.onSend = onSend
+    },
+    restore() {
+      if (originalSendBeacon) {
+        navigator.sendBeacon = originalSendBeacon
+      }
+      if (originalRequest) {
+        window.Request = originalRequest
+      }
+      if (originalFetch) {
+        window.fetch = originalFetch
+      }
+      stubXhrManager?.reset()
+      StubXhr.onSend = noop
+    },
+  }
+}
+
+export function isAdoptedStyleSheetsSupported() {
+  return Boolean((document as any).adoptedStyleSheets)
 }

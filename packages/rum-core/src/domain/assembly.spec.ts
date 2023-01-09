@@ -1,64 +1,72 @@
+import type { RelativeTime } from '@datadog/browser-core'
 import {
-  ErrorSource,
-  ONE_MINUTE,
-  RawError,
-  RelativeTime,
-  display,
   updateExperimentalFeatures,
   resetExperimentalFeatures,
+  ErrorSource,
+  ONE_MINUTE,
+  display,
 } from '@datadog/browser-core'
 import { createRumSessionManagerMock } from '../../test/mockRumSessionManager'
 import { createRawRumEvent } from '../../test/fixtures'
-import {
-  cleanupSyntheticsWorkerValues,
-  mockSyntheticsWorkerValues,
-  mockCiVisibilityWindowValues,
-  cleanupCiVisibilityWindowValues,
-  setup,
-  TestSetupBuilder,
-} from '../../test/specHelper'
-import { RumEventDomainContext } from '../domainContext.types'
-import { CommonContext, RawRumActionEvent, RawRumErrorEvent, RawRumEvent, RumEventType } from '../rawRumEvent.types'
-import { RumActionEvent, RumErrorEvent, RumEvent } from '../rumEvent.types'
+import type { TestSetupBuilder } from '../../test/specHelper'
+import { mockCiVisibilityWindowValues, cleanupCiVisibilityWindowValues, setup } from '../../test/specHelper'
+import type { RumEventDomainContext } from '../domainContext.types'
+import type { CommonContext, RawRumActionEvent, RawRumErrorEvent, RawRumEvent } from '../rawRumEvent.types'
+import { RumEventType } from '../rawRumEvent.types'
+import type { RumActionEvent, RumErrorEvent, RumEvent } from '../rumEvent.types'
 import { initEventBridgeStub, deleteEventBridgeStub } from '../../../core/test/specHelper'
+import { cleanupSyntheticsWorkerValues, mockSyntheticsWorkerValues } from '../../../core/test/syntheticsWorkerValues'
 import { startRumAssembly } from './assembly'
-import { LifeCycle, LifeCycleEventType, RawRumEventCollectedData } from './lifeCycle'
+import type { LifeCycle, RawRumEventCollectedData } from './lifeCycle'
+import { LifeCycleEventType } from './lifeCycle'
 import { RumSessionPlan } from './rumSessionManager'
+import type { RumConfiguration } from './configuration'
+import type { ViewContext } from './contexts/viewContexts'
 
 describe('rum assembly', () => {
   let setupBuilder: TestSetupBuilder
   let commonContext: CommonContext
   let serverRumEvents: RumEvent[]
-
+  let extraConfigurationOptions: Partial<RumConfiguration> = {}
+  let findView: () => ViewContext
+  let reportErrorSpy: jasmine.Spy<jasmine.Func>
   beforeEach(() => {
+    findView = () => ({
+      id: '7890',
+      name: 'view name',
+      documentVersion: 42,
+    })
+    reportErrorSpy = jasmine.createSpy('reportError')
     commonContext = {
       context: {},
       user: {},
     }
     setupBuilder = setup()
-      .withParentContexts({
-        findAction: () => ({
-          action: {
-            id: '7890',
-          },
-        }),
-        findView: () => ({
-          view: {
-            id: 'abcde',
-          },
-        }),
+      .withViewContexts({
+        findView: () => findView(),
       })
-      .beforeBuild(({ configuration, lifeCycle, sessionManager, parentContexts, urlContexts }) => {
+      .withActionContexts({
+        findActionId: () => '7890',
+      })
+      .beforeBuild(({ configuration, lifeCycle, sessionManager, viewContexts, urlContexts, actionContexts }) => {
         serverRumEvents = []
         lifeCycle.subscribe(LifeCycleEventType.RUM_EVENT_COLLECTED, (serverRumEvent) =>
           serverRumEvents.push(serverRumEvent)
         )
-        startRumAssembly(configuration, lifeCycle, sessionManager, parentContexts, urlContexts, () => commonContext)
+        startRumAssembly(
+          { ...configuration, ...extraConfigurationOptions },
+          lifeCycle,
+          sessionManager,
+          viewContexts,
+          urlContexts,
+          actionContexts,
+          () => commonContext,
+          reportErrorSpy
+        )
       })
   })
 
   afterEach(() => {
-    resetExperimentalFeatures()
     deleteEventBridgeStub()
     setupBuilder.cleanup()
     cleanupSyntheticsWorkerValues()
@@ -282,7 +290,7 @@ describe('rum assembly', () => {
         })
 
         expect(serverRumEvents[0].view.id).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
-        expect(displaySpy).toHaveBeenCalledWith(`Can't dismiss view events using beforeSend!`)
+        expect(displaySpy).toHaveBeenCalledWith("Can't dismiss view events using beforeSend!")
       })
     })
   })
@@ -297,6 +305,7 @@ describe('rum assembly', () => {
       expect(serverRumEvents[0].view.id).toBeDefined()
       expect(serverRumEvents[0].date).toBeDefined()
       expect(serverRumEvents[0].session.id).toBeDefined()
+      expect(serverRumEvents[0].source).toBe('browser')
     })
 
     it('should be overwritten by event attributes', () => {
@@ -429,21 +438,74 @@ describe('rum assembly', () => {
       expect(serverRumEvents[0].action).not.toBeDefined()
       serverRumEvents = []
 
+      const generatedRawRumActionEvent = createRawRumEvent(RumEventType.ACTION) as RawRumActionEvent
       notifyRawRumEvent(lifeCycle, {
-        rawRumEvent: createRawRumEvent(RumEventType.ACTION),
+        rawRumEvent: generatedRawRumActionEvent,
       })
-      expect((serverRumEvents[0] as RumActionEvent).action.id).not.toEqual('7890')
+      expect((serverRumEvents[0] as RumActionEvent).action.id).toEqual(generatedRawRumActionEvent.action.id)
       serverRumEvents = []
     })
   })
 
   describe('view context', () => {
+    afterEach(() => {
+      resetExperimentalFeatures()
+    })
+
     it('should be merged with event attributes', () => {
       const { lifeCycle } = setupBuilder.build()
       notifyRawRumEvent(lifeCycle, {
         rawRumEvent: createRawRumEvent(RumEventType.ACTION),
       })
-      expect(serverRumEvents[0].view.id).toBe('abcde')
+      expect(serverRumEvents[0].view).toEqual(
+        jasmine.objectContaining({
+          id: '7890',
+          name: 'view name',
+        })
+      )
+    })
+
+    it('should include the view document version in global context', () => {
+      updateExperimentalFeatures(['report_view_document_version'])
+      const { lifeCycle } = setupBuilder.build()
+      notifyRawRumEvent(lifeCycle, {
+        rawRumEvent: createRawRumEvent(RumEventType.RESOURCE),
+      })
+      expect(serverRumEvents[0].context).toEqual(
+        jasmine.objectContaining({
+          _dd: {
+            view: {
+              document_version: 42,
+            },
+          },
+        })
+      )
+    })
+  })
+
+  describe('service and version', () => {
+    beforeEach(() => {
+      extraConfigurationOptions = { service: 'default service', version: 'default version' }
+    })
+
+    it('should come from the init configuration by default', () => {
+      const { lifeCycle } = setupBuilder.build()
+
+      notifyRawRumEvent(lifeCycle, {
+        rawRumEvent: createRawRumEvent(RumEventType.ACTION),
+      })
+      expect(serverRumEvents[0].service).toEqual('default service')
+      expect(serverRumEvents[0].version).toEqual('default version')
+    })
+
+    it('should be overridden by the view context', () => {
+      const { lifeCycle } = setupBuilder.build()
+      findView = () => ({ service: 'new service', version: 'new version', id: '1234', documentVersion: 0 })
+      notifyRawRumEvent(lifeCycle, {
+        rawRumEvent: createRawRumEvent(RumEventType.ACTION),
+      })
+      expect(serverRumEvents[0].service).toEqual('new service')
+      expect(serverRumEvents[0].version).toEqual('new version')
     })
   })
 
@@ -514,7 +576,7 @@ describe('rum assembly', () => {
         type: 'user',
       })
       expect(serverRumEvents[0]._dd.session).toEqual({
-        plan: RumSessionPlan.REPLAY,
+        plan: RumSessionPlan.WITH_SESSION_REPLAY,
       })
     })
 
@@ -579,7 +641,6 @@ describe('rum assembly', () => {
       const { lifeCycle } = setupBuilder.build()
       notifyRawRumEvent(lifeCycle, { rawRumEvent: createRawRumEvent(RumEventType.VIEW) })
 
-      updateExperimentalFeatures(['event-bridge'])
       initEventBridgeStub()
 
       notifyRawRumEvent(lifeCycle, { rawRumEvent: createRawRumEvent(RumEventType.VIEW) })
@@ -603,15 +664,6 @@ describe('rum assembly', () => {
   })
 
   describe('error events limitation', () => {
-    const notifiedRawErrors: RawError[] = []
-
-    beforeEach(() => {
-      notifiedRawErrors.length = 0
-      setupBuilder.beforeBuild(({ lifeCycle }) => {
-        lifeCycle.subscribe(LifeCycleEventType.RAW_ERROR_COLLECTED, ({ error }) => notifiedRawErrors.push(error))
-      })
-    })
-
     it('stops sending error events when reaching the limit', () => {
       const { lifeCycle } = setupBuilder.withConfiguration({ eventRateLimiterThreshold: 1 }).build()
       notifyRawRumErrorEvent(lifeCycle, 'foo')
@@ -619,8 +671,8 @@ describe('rum assembly', () => {
 
       expect(serverRumEvents.length).toBe(1)
       expect((serverRumEvents[0] as RumErrorEvent).error.message).toBe('foo')
-      expect(notifiedRawErrors.length).toBe(1)
-      expect(notifiedRawErrors[0]).toEqual(
+      expect(reportErrorSpy).toHaveBeenCalledTimes(1)
+      expect(reportErrorSpy.calls.argsFor(0)[0]).toEqual(
         jasmine.objectContaining({
           message: 'Reached max number of errors by minute: 1',
           source: ErrorSource.AGENT,
@@ -645,7 +697,7 @@ describe('rum assembly', () => {
       notifyRawRumErrorEvent(lifeCycle, 'foo')
       expect(serverRumEvents.length).toBe(1)
       expect((serverRumEvents[0] as RumErrorEvent).error.message).toBe('foo')
-      expect(notifiedRawErrors.length).toBe(0)
+      expect(reportErrorSpy).not.toHaveBeenCalled()
     })
 
     it('allows to send new errors after a minute', () => {
@@ -673,15 +725,6 @@ describe('rum assembly', () => {
   })
 
   describe('action events limitation', () => {
-    const notifiedRawErrors: RawError[] = []
-
-    beforeEach(() => {
-      notifiedRawErrors.length = 0
-      setupBuilder.beforeBuild(({ lifeCycle }) => {
-        lifeCycle.subscribe(LifeCycleEventType.RAW_ERROR_COLLECTED, ({ error }) => notifiedRawErrors.push(error))
-      })
-    })
-
     it('stops sending action events when reaching the limit', () => {
       const { lifeCycle } = setupBuilder.withConfiguration({ eventRateLimiterThreshold: 1 }).build()
 
@@ -690,8 +733,8 @@ describe('rum assembly', () => {
 
       expect(serverRumEvents.length).toBe(1)
       expect((serverRumEvents[0] as RumActionEvent).action.target?.name).toBe('foo')
-      expect(notifiedRawErrors.length).toBe(1)
-      expect(notifiedRawErrors[0]).toEqual(
+      expect(reportErrorSpy).toHaveBeenCalledTimes(1)
+      expect(reportErrorSpy.calls.argsFor(0)[0]).toEqual(
         jasmine.objectContaining({
           message: 'Reached max number of actions by minute: 1',
           source: ErrorSource.AGENT,
@@ -716,7 +759,7 @@ describe('rum assembly', () => {
       notifyRumActionEvent(lifeCycle, 'foo')
       expect(serverRumEvents.length).toBe(1)
       expect((serverRumEvents[0] as RumActionEvent).action.target?.name).toBe('foo')
-      expect(notifiedRawErrors.length).toBe(0)
+      expect(reportErrorSpy).not.toHaveBeenCalled()
     })
 
     it('allows to send new actions after a minute', () => {

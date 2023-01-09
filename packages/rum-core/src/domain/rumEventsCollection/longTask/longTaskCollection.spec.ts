@@ -1,7 +1,9 @@
-import { Duration, RelativeTime, ServerDuration } from '@datadog/browser-core'
-import { createRumSessionManagerMock, RumSessionManagerMock } from '../../../../test/mockRumSessionManager'
-import { setup, TestSetupBuilder } from '../../../../test/specHelper'
-import { RumPerformanceEntry, RumPerformanceLongTaskTiming } from '../../../browser/performanceCollection'
+import type { Duration, RelativeTime, ServerDuration } from '@datadog/browser-core'
+import type { RumSessionManagerMock } from '../../../../test/mockRumSessionManager'
+import { createRumSessionManagerMock } from '../../../../test/mockRumSessionManager'
+import type { TestSetupBuilder } from '../../../../test/specHelper'
+import { setup } from '../../../../test/specHelper'
+import type { RumPerformanceEntry, RumPerformanceLongTaskTiming } from '../../../browser/performanceCollection'
 import { RumEventType } from '../../../rawRumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
 import { startLongTaskCollection } from './longTaskCollection'
@@ -33,32 +35,31 @@ describe('long task collection', () => {
 
   it('should only listen to long task performance entry', () => {
     const { lifeCycle, rawRumEvents } = setupBuilder.build()
-    ;[
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [
       LONG_TASK,
       { duration: 100 as Duration, entryType: 'navigation', startTime: 1234 },
       { duration: 100 as Duration, entryType: 'resource', startTime: 1234 },
       { duration: 100 as Duration, entryType: 'paint', startTime: 1234 },
-    ].forEach((entry) => {
-      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, entry as RumPerformanceEntry)
-    })
+    ] as RumPerformanceEntry[])
+
     expect(rawRumEvents.length).toBe(1)
   })
 
-  it('should only collect when session has a replay plan', () => {
+  it('should only collect when session allows long tasks', () => {
     const { lifeCycle, rawRumEvents } = setupBuilder.build()
 
-    sessionManager.setReplayPlan()
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, LONG_TASK)
+    sessionManager.setLongTaskAllowed(true)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [LONG_TASK])
     expect(rawRumEvents.length).toBe(1)
 
-    sessionManager.setLitePlan()
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, LONG_TASK)
+    sessionManager.setLongTaskAllowed(false)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [LONG_TASK])
     expect(rawRumEvents.length).toBe(1)
   })
 
   it('should create raw rum event from performance entry', () => {
     const { lifeCycle, rawRumEvents } = setupBuilder.build()
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, LONG_TASK)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [LONG_TASK])
 
     expect(rawRumEvents[0].startTime).toBe(1234 as RelativeTime)
     expect(rawRumEvents[0].rawRumEvent).toEqual({
@@ -68,6 +69,9 @@ describe('long task collection', () => {
         duration: (100 * 1e6) as ServerDuration,
       },
       type: RumEventType.LONG_TASK,
+      _dd: {
+        discarded: false,
+      },
     })
     expect(rawRumEvents[0].domainContext).toEqual({
       performanceEntry: { name: 'self', duration: 100, entryType: 'longtask', startTime: 1234 },

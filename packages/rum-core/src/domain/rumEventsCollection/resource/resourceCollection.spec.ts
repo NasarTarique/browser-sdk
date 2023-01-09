@@ -1,30 +1,39 @@
+import type { Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
 import {
-  Duration,
+  relativeToClocks,
+  resetExperimentalFeatures,
+  updateExperimentalFeatures,
   isIE,
-  RelativeTime,
   RequestType,
   ResourceType,
-  ServerDuration,
-  TimeStamp,
 } from '@datadog/browser-core'
 import { createResourceEntry } from '../../../../test/fixtures'
-import { setup, TestSetupBuilder } from '../../../../test/specHelper'
-import { RawRumResourceEvent, RumEventType } from '../../../rawRumEvent.types'
+import type { TestSetupBuilder } from '../../../../test/specHelper'
+import { setup } from '../../../../test/specHelper'
+import type { RawRumResourceEvent } from '../../../rawRumEvent.types'
+import { RumEventType } from '../../../rawRumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
-import { RequestCompleteEvent } from '../../requestCollection'
+import type { RequestCompleteEvent } from '../../requestCollection'
 import { TraceIdentifier } from '../../tracing/tracer'
+import { validateAndBuildRumConfiguration } from '../../configuration'
+import { createRumSessionManagerMock } from '../../../../test/mockRumSessionManager'
 import { startResourceCollection } from './resourceCollection'
 
 describe('resourceCollection', () => {
   let setupBuilder: TestSetupBuilder
 
   beforeEach(() => {
-    setupBuilder = setup().beforeBuild(({ lifeCycle }) => {
-      startResourceCollection(lifeCycle)
+    setupBuilder = setup().beforeBuild(({ lifeCycle, sessionManager }) => {
+      startResourceCollection(
+        lifeCycle,
+        validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
+        sessionManager
+      )
     })
   })
 
   afterEach(() => {
+    resetExperimentalFeatures()
     setupBuilder.cleanup()
   })
 
@@ -35,11 +44,11 @@ describe('resourceCollection', () => {
       name: 'https://resource.com/valid',
       startTime: 1234 as RelativeTime,
     })
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, performanceEntry)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [performanceEntry])
 
     expect(rawRumEvents[0].startTime).toBe(1234 as RelativeTime)
     expect(rawRumEvents[0].rawRumEvent).toEqual({
-      date: (jasmine.any(Number) as unknown) as TimeStamp,
+      date: jasmine.any(Number) as unknown as TimeStamp,
       resource: {
         id: jasmine.any(String),
         duration: (100 * 1e6) as ServerDuration,
@@ -48,6 +57,9 @@ describe('resourceCollection', () => {
         url: 'https://resource.com/valid',
       },
       type: RumEventType.RESOURCE,
+      _dd: {
+        discarded: false,
+      },
     })
     expect(rawRumEvents[0].domainContext).toEqual({
       performanceEntry,
@@ -82,6 +94,9 @@ describe('resourceCollection', () => {
         url: 'https://resource.com/valid',
       },
       type: RumEventType.RESOURCE,
+      _dd: {
+        discarded: false,
+      },
     })
     expect(rawRumEvents[0].domainContext).toEqual({
       xhr,
@@ -91,6 +106,34 @@ describe('resourceCollection', () => {
       requestInit: undefined,
       error: undefined,
     })
+  })
+
+  it('should collect computed duration and performance entry duration when resource_durations ff is enabled', () => {
+    updateExperimentalFeatures(['resource_durations'])
+
+    const match = createResourceEntry({ startTime: 200 as RelativeTime, duration: 300 as Duration })
+    spyOn(performance, 'getEntriesByName').and.returnValues([match] as unknown as PerformanceResourceTiming[])
+
+    const { lifeCycle, rawRumEvents } = setupBuilder.build()
+    lifeCycle.notify(
+      LifeCycleEventType.REQUEST_COMPLETED,
+      createCompletedRequest({
+        duration: 500 as Duration,
+        method: 'GET',
+        startClocks: relativeToClocks(100 as RelativeTime),
+        status: 200,
+        type: RequestType.FETCH,
+        url: 'https://resource.com/valid',
+        input: 'https://resource.com/valid',
+      })
+    )
+    const rawRumResourceEvent = rawRumEvents[0].rawRumEvent as RawRumResourceEvent
+    expect(rawRumResourceEvent._dd).toEqual(
+      jasmine.objectContaining({
+        computed_duration: 500000000,
+        performance_entry_duration: 300000000,
+      })
+    )
   })
 
   it('should create resource from completed fetch request', () => {
@@ -126,6 +169,9 @@ describe('resourceCollection', () => {
         url: 'https://resource.com/valid',
       },
       type: RumEventType.RESOURCE,
+      _dd: {
+        discarded: false,
+      },
     })
     expect(rawRumEvents[0].domainContext).toEqual({
       performanceEntry: undefined,
@@ -152,30 +198,150 @@ describe('resourceCollection', () => {
   describe('tracing info', () => {
     it('should be processed from traced initial document', () => {
       const { lifeCycle, rawRumEvents } = setupBuilder.build()
-      lifeCycle.notify(
-        LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED,
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [
         createResourceEntry({
           traceId: '1234',
-        })
-      )
-      const traceInfo = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd!
-      expect(traceInfo).toBeDefined()
-      expect(traceInfo.trace_id).toBe('1234')
+        }),
+      ])
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields).toBeDefined()
+      expect(privateFields.trace_id).toBe('1234')
     })
 
-    it('should be processed from completed request', () => {
+    it('should be processed from sampled completed request', () => {
       const { lifeCycle, rawRumEvents } = setupBuilder.build()
       lifeCycle.notify(
         LifeCycleEventType.REQUEST_COMPLETED,
         createCompletedRequest({
+          traceSampled: true,
           spanId: new TraceIdentifier(),
           traceId: new TraceIdentifier(),
         })
       )
-      const traceInfo = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd!
-      expect(traceInfo).toBeDefined()
-      expect(traceInfo.trace_id).toBeDefined()
-      expect(traceInfo.span_id).toBeDefined()
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields.trace_id).toBeDefined()
+      expect(privateFields.span_id).toBeDefined()
+    })
+
+    it('should not be processed from not sampled completed request', () => {
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+      lifeCycle.notify(
+        LifeCycleEventType.REQUEST_COMPLETED,
+        createCompletedRequest({
+          traceSampled: false,
+          spanId: new TraceIdentifier(),
+          traceId: new TraceIdentifier(),
+        })
+      )
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields.trace_id).not.toBeDefined()
+      expect(privateFields.span_id).not.toBeDefined()
+    })
+
+    it('should pull traceSampleRate from config if present', () => {
+      setupBuilder = setup().beforeBuild(({ lifeCycle, sessionManager }) => {
+        startResourceCollection(
+          lifeCycle,
+          validateAndBuildRumConfiguration({
+            clientToken: 'xxx',
+            applicationId: 'xxx',
+            traceSampleRate: 60,
+          })!,
+          sessionManager
+        )
+      })
+
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+      lifeCycle.notify(
+        LifeCycleEventType.REQUEST_COMPLETED,
+        createCompletedRequest({
+          traceSampled: true,
+          spanId: new TraceIdentifier(),
+          traceId: new TraceIdentifier(),
+        })
+      )
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields.rule_psr).toEqual(0.6)
+    })
+
+    it('should not define rule_psr if traceSampleRate is undefined', () => {
+      setupBuilder = setup().beforeBuild(({ lifeCycle, sessionManager }) => {
+        startResourceCollection(
+          lifeCycle,
+          validateAndBuildRumConfiguration({
+            clientToken: 'xxx',
+            applicationId: 'xxx',
+          })!,
+          sessionManager
+        )
+      })
+
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+      lifeCycle.notify(
+        LifeCycleEventType.REQUEST_COMPLETED,
+        createCompletedRequest({
+          traceSampled: true,
+          spanId: new TraceIdentifier(),
+          traceId: new TraceIdentifier(),
+        })
+      )
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields.rule_psr).toBeUndefined()
+    })
+
+    it('should define rule_psr to 0 if traceSampleRate is set to 0', () => {
+      setupBuilder = setup().beforeBuild(({ lifeCycle, sessionManager }) => {
+        startResourceCollection(
+          lifeCycle,
+          validateAndBuildRumConfiguration({
+            clientToken: 'xxx',
+            applicationId: 'xxx',
+            traceSampleRate: 0,
+          })!,
+          sessionManager
+        )
+      })
+
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+      lifeCycle.notify(
+        LifeCycleEventType.REQUEST_COMPLETED,
+        createCompletedRequest({
+          traceSampled: true,
+          spanId: new TraceIdentifier(),
+          traceId: new TraceIdentifier(),
+        })
+      )
+      const privateFields = (rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd
+      expect(privateFields.rule_psr).toEqual(0)
+    })
+  })
+
+  describe('indexing info', () => {
+    it('should be discarded=true if session is not tracked', () => {
+      setupBuilder.withSessionManager(createRumSessionManagerMock().setNotTracked())
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [createResourceEntry()])
+
+      expect((rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd.discarded).toBeTrue()
+    })
+
+    it('should be discarded=true if session does not allow resources', () => {
+      setupBuilder.withSessionManager(createRumSessionManagerMock().setResourceAllowed(false))
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [createResourceEntry()])
+
+      expect((rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd.discarded).toBeTrue()
+    })
+
+    it('should be discarded=false if session allows resources', () => {
+      setupBuilder.withSessionManager(createRumSessionManagerMock().setResourceAllowed(true))
+      const { lifeCycle, rawRumEvents } = setupBuilder.build()
+
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [createResourceEntry()])
+
+      expect((rawRumEvents[0].rawRumEvent as RawRumResourceEvent)._dd.discarded).toBeFalse()
     })
   })
 })

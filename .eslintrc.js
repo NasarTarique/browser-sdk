@@ -9,8 +9,6 @@ module.exports = {
     'plugin:@typescript-eslint/recommended-requiring-type-checking',
     'plugin:import/typescript',
     'prettier',
-    'prettier/@typescript-eslint',
-    'plugin:import/typescript',
   ],
   parser: '@typescript-eslint/parser',
   parserOptions: {
@@ -35,6 +33,7 @@ module.exports = {
   rules: {
     'arrow-body-style': 'error',
     camelcase: ['error', { properties: 'never', allow: ['_dd_temp_'] }],
+    curly: 'error',
     eqeqeq: ['error', 'smart'],
     'guard-for-in': 'error',
     'id-denylist': [
@@ -50,10 +49,8 @@ module.exports = {
       'undefined',
     ],
     'id-match': 'error',
-    'max-len': ['error', { code: 120, ignoreUrls: true }],
     'no-bitwise': 'error',
     'no-caller': 'error',
-    'no-duplicate-imports': 'error',
     'no-else-return': 'error',
     'no-eq-null': 'error',
     'no-eval': 'error',
@@ -65,11 +62,13 @@ module.exports = {
     'no-template-curly-in-string': 'error',
     'no-throw-literal': 'error',
     'no-undef-init': 'error',
+    'no-unreachable': 'error',
+    'no-useless-concat': 'error',
     'object-shorthand': 'error',
     'one-var': ['error', 'never'],
     'prefer-rest-params': 'off',
-    'prefer-object-spread': 'error',
     'prefer-template': 'error',
+    quotes: ['error', 'single', { avoidEscape: true }],
     radix: 'error',
     'spaced-comment': [
       'error',
@@ -110,6 +109,7 @@ module.exports = {
         },
       },
     ],
+    '@typescript-eslint/consistent-type-imports': ['error'],
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/member-ordering': [
       'error',
@@ -152,11 +152,14 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/no-unsafe-assignment': 'off',
+    '@typescript-eslint/no-unsafe-argument': 'off',
     '@typescript-eslint/no-unsafe-member-access': 'off',
     '@typescript-eslint/no-unused-vars': ['error', { args: 'all', argsIgnorePattern: '^_', vars: 'all' }],
     '@typescript-eslint/triple-slash-reference': ['error', { path: 'always', types: 'prefer-import', lib: 'always' }],
 
+    'import/no-cycle': 'error',
     'import/no-default-export': 'error',
+    'import/no-duplicates': 'error',
     'import/no-extraneous-dependencies': 'error',
     'import/no-unresolved': 'error',
     'import/no-useless-path-segments': 'error',
@@ -203,7 +206,7 @@ module.exports = {
       },
     },
     {
-      files: ['packages/*/src/**/*.ts'],
+      files: ['packages/*/src/**/*.ts', 'developer-extension/src/**/*.{tsx,ts}'],
       rules: {
         'no-console': 'error',
       },
@@ -213,6 +216,25 @@ module.exports = {
       excludedFiles: '*.spec.ts',
       rules: {
         'local-rules/disallow-side-effects': 'error',
+        'no-restricted-syntax': [
+          'error',
+          {
+            selector: 'ObjectExpression > SpreadElement',
+            message: 'Object spread is not authorized. Please use "assign" from the core package utils instead.',
+          },
+          {
+            selector: 'ArrayExpression > SpreadElement',
+            message: 'Array spread is not authorized. Please use .concat instead.',
+          },
+          {
+            selector: 'MemberExpression[object.name="Date"][property.name="now"]',
+            message: '`Date.now()` is not authorized. Please use `dateNow()` instead',
+          },
+          {
+            selector: 'TSEnumDeclaration:not([const=true])',
+            message: 'When possible, use `const enum` as it produces less code when transpiled.',
+          },
+        ],
       },
     },
     {

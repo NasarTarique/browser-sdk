@@ -9,7 +9,6 @@
  * viewport is being measured by the browser
  */
 
-import { isExperimentalFeatureEnabled } from '@datadog/browser-core'
 import type { VisualViewportRecord } from '../../types'
 
 // Scrollbar widths vary across properties on different devices and browsers
@@ -72,42 +71,28 @@ export const getVisualViewport = (): VisualViewportRecord['data'] => {
   }
 }
 
-// excludes the width of any rendered classic scrollbar that is fixed to the visual viewport
-export function getWindowWidth(): number {
-  const visual = window.visualViewport
-  if (isExperimentalFeatureEnabled('visualviewport') && visual) {
-    return visual.width * visual.scale
-  }
-  return window.innerWidth || 0
-}
-
-// excludes the height of any rendered classic scrollbar that is fixed to the visual viewport
-export function getWindowHeight(): number {
-  const visual = window.visualViewport
-  if (isExperimentalFeatureEnabled('visualviewport') && visual) {
-    return visual.height * visual.scale
-  }
-  return window.innerHeight || 0
-}
-
 export function getScrollX() {
+  let scrollX
   const visual = window.visualViewport
-  if (isExperimentalFeatureEnabled('visualviewport') && visual) {
-    return visual.pageLeft - visual.offsetLeft
+  if (visual) {
+    scrollX = visual.pageLeft - visual.offsetLeft
+  } else if (window.scrollX !== undefined) {
+    scrollX = window.scrollX
+  } else {
+    scrollX = window.pageXOffset || 0
   }
-  if (window.scrollX !== undefined) {
-    return window.scrollX
-  }
-  return window.pageXOffset || 0
+  return Math.round(scrollX)
 }
 
 export function getScrollY() {
+  let scrollY
   const visual = window.visualViewport
-  if (isExperimentalFeatureEnabled('visualviewport') && visual) {
-    return visual.pageTop - visual.offsetTop
+  if (visual) {
+    scrollY = visual.pageTop - visual.offsetTop
+  } else if (window.scrollY !== undefined) {
+    scrollY = window.scrollY
+  } else {
+    scrollY = window.pageYOffset || 0
   }
-  if (window.scrollY !== undefined) {
-    return window.scrollY
-  }
-  return window.pageYOffset || 0
+  return Math.round(scrollY)
 }

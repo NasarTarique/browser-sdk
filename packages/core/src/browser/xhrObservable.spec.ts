@@ -1,8 +1,10 @@
 import { stubXhr, withXhr } from '../../test/specHelper'
-import { Subscription } from '../tools/observable'
-import { initXhrObservable, XhrCompleteContext, XhrContext } from './xhrObservable'
+import { isIE } from '../tools/browserDetection'
+import type { Subscription } from '../tools/observable'
+import type { XhrCompleteContext, XhrContext } from './xhrObservable'
+import { initXhrObservable } from './xhrObservable'
 
-describe('xhr proxy', () => {
+describe('xhr observable', () => {
   let requestsTrackingSubscription: Subscription
   let contextEditionSubscription: Subscription | undefined
   let requests: XhrCompleteContext[]
@@ -43,7 +45,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/ok')
-        expect(request.responseText).toBe('ok')
         expect(request.status).toBe(200)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -64,7 +65,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/expected-404')
-        expect(request.responseText).toBe('NOT FOUND')
         expect(request.status).toBe(404)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -85,7 +85,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/throw')
-        expect(request.responseText).toEqual('expected server error')
         expect(request.status).toBe(500)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -106,7 +105,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toBe('http://foo.bar/qux')
-        expect(request.responseText).toBe('')
         expect(request.status).toBe(0)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -134,7 +132,6 @@ describe('xhr proxy', () => {
         expect(requests.length).toBe(1)
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/ok')
-        expect(request.responseText).toBe('ok')
         expect(request.status).toBe(200)
         expect(request.startTime).toEqual(jasmine.any(Number))
         expect(request.duration).toEqual(jasmine.any(Number))
@@ -157,7 +154,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/ok')
-        expect(request.responseText).toBeUndefined()
         expect(request.status).toBe(0)
         expect(request.startTime).toEqual(jasmine.any(Number))
         expect(request.duration).toEqual(jasmine.any(Number))
@@ -180,7 +176,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/ok')
-        expect(request.responseText).toBe('ok')
         expect(request.status).toBe(200)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -203,7 +198,6 @@ describe('xhr proxy', () => {
         const request = requests[0]
         expect(request.method).toBe('GET')
         expect(request.url).toContain('/ok')
-        expect(request.responseText).toBe('ok')
         expect(request.status).toBe(200)
         expect(request.isAborted).toBe(false)
         expect(request.startTime).toEqual(jasmine.any(Number))
@@ -293,6 +287,59 @@ describe('xhr proxy', () => {
         expect(xhr.onreadystatechange).toHaveBeenCalledTimes(2)
         expect(listeners.load.length).toBe(0)
         expect(listeners.loadend.length).toBe(0)
+        done()
+      },
+    })
+  })
+
+  it('should track request to undefined url', (done) => {
+    withXhr({
+      setup(xhr) {
+        xhr.open('GET', undefined)
+        xhr.send()
+        xhr.complete(404, 'NOT FOUND')
+      },
+      onComplete() {
+        const request = requests[0]
+        expect(request.method).toBe('GET')
+        expect(request.url).toContain('/undefined')
+        expect(request.status).toBe(404)
+        done()
+      },
+    })
+  })
+
+  it('should track request to null url', (done) => {
+    withXhr({
+      setup(xhr) {
+        xhr.open('GET', null)
+        xhr.send()
+        xhr.complete(404, 'NOT FOUND')
+      },
+      onComplete() {
+        const request = requests[0]
+        expect(request.method).toBe('GET')
+        expect(request.url).toContain('/null')
+        expect(request.status).toBe(404)
+        done()
+      },
+    })
+  })
+
+  it('should track request to URL object', (done) => {
+    if (isIE()) {
+      pending('IE not supported')
+    }
+    withXhr({
+      setup(xhr) {
+        xhr.open('GET', new URL('http://example.com/path'))
+        xhr.send()
+        xhr.complete(200, 'ok')
+      },
+      onComplete() {
+        const request = requests[0]
+        expect(request.method).toBe('GET')
+        expect(request.url).toBe('http://example.com/path')
         done()
       },
     })

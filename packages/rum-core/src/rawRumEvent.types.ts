@@ -1,4 +1,4 @@
-import {
+import type {
   Context,
   Duration,
   ErrorSource,
@@ -6,10 +6,12 @@ import {
   ResourceType,
   ServerDuration,
   TimeStamp,
+  RawErrorCause,
+  User,
 } from '@datadog/browser-core'
-import { RumSessionPlan } from './domain/rumSessionManager'
+import type { RumSessionPlan } from './domain/rumSessionManager'
 
-export enum RumEventType {
+export const enum RumEventType {
   ACTION = 'action',
   ERROR = 'error',
   LONG_TASK = 'long_task',
@@ -35,9 +37,11 @@ export interface RawRumResourceEvent {
     first_byte?: PerformanceResourceDetailsElement
     download?: PerformanceResourceDetailsElement
   }
-  _dd?: {
+  _dd: {
     trace_id?: string
     span_id?: string // not available for initial document tracing
+    rule_psr?: number
+    discarded: boolean
   }
 }
 
@@ -50,11 +54,6 @@ export interface RawRumErrorEvent {
   date: TimeStamp
   type: RumEventType.ERROR
   error: {
-    resource?: {
-      url: string
-      status_code: number
-      method: string
-    }
     id: string
     type?: string
     stack?: string
@@ -62,10 +61,14 @@ export interface RawRumErrorEvent {
     source: ErrorSource
     message: string
     handling?: ErrorHandling
+    causes?: RawErrorCause[]
+    source_type: 'browser'
   }
   view?: {
     in_foreground: boolean
   }
+
+  feature_flags?: Context
 }
 
 export interface RawRumViewEvent {
@@ -73,6 +76,7 @@ export interface RawRumViewEvent {
   type: RumEventType.VIEW
   view: {
     loading_type: ViewLoadingType
+    first_byte?: ServerDuration
     first_contentful_paint?: ServerDuration
     first_input_delay?: ServerDuration
     first_input_time?: ServerDuration
@@ -93,11 +97,13 @@ export interface RawRumViewEvent {
     action: Count
     long_task: Count
     resource: Count
+    frustration: Count
     in_foreground_periods?: InForegroundPeriod[]
   }
   session: {
     has_replay: true | undefined
   }
+  feature_flags?: Context
   _dd: {
     document_version: number
     replay_stats?: ReplayStats
@@ -109,7 +115,7 @@ export interface InForegroundPeriod {
   duration: ServerDuration
 }
 
-export enum ViewLoadingType {
+export const enum ViewLoadingType {
   INITIAL_LOAD = 'initial_load',
   ROUTE_CHANGE = 'route_change',
 }
@@ -135,6 +141,9 @@ export interface RawRumLongTaskEvent {
     id: string
     duration: ServerDuration
   }
+  _dd: {
+    discarded: boolean
+  }
 }
 
 export interface RawRumActionEvent {
@@ -144,6 +153,9 @@ export interface RawRumActionEvent {
     id: string
     type: ActionType
     loading_time?: ServerDuration
+    frustration?: {
+      type: FrustrationType[]
+    }
     error?: Count
     long_task?: Count
     resource?: Count
@@ -154,11 +166,30 @@ export interface RawRumActionEvent {
   view?: {
     in_foreground: boolean
   }
+  _dd?: {
+    action?: {
+      target?: {
+        selector?: string
+        width?: number
+        height?: number
+      }
+      position?: {
+        x: number
+        y: number
+      }
+    }
+  }
 }
 
-export enum ActionType {
+export const enum ActionType {
   CLICK = 'click',
   CUSTOM = 'custom',
+}
+
+export const enum FrustrationType {
+  RAGE_CLICK = 'rage_click',
+  ERROR_CLICK = 'error_click',
+  DEAD_CLICK = 'dead_click',
 }
 
 export type RawRumEvent =
@@ -174,14 +205,34 @@ export interface RumContext {
     id: string
   }
   service?: string
+  version?: string
+  source: 'browser'
   session: {
     id: string
     type: string
     has_replay?: boolean
   }
+  display?: {
+    viewport: {
+      width: number
+      height: number
+    }
+  }
+  view: {
+    id: string
+    referrer?: string
+    url: string
+    name?: string
+  }
+  action?: {
+    id: string | string[]
+  }
   synthetics?: {
     test_id: string
     result_id: string
+  }
+  ci_test?: {
+    test_execution_id: string
   }
   _dd: {
     format_version: 2
@@ -189,52 +240,11 @@ export interface RumContext {
     session: {
       plan: RumSessionPlan
     }
+    view?: {
+      document_version: number
+    }
     browser_sdk_version?: string
   }
-  ci_test?: {
-    test_execution_id: string
-  }
-}
-
-export interface ViewContext extends Context {
-  view: {
-    id: string
-    name?: string
-  }
-}
-
-export interface ActionContext extends Context {
-  action: {
-    id: string
-  }
-}
-
-export interface UrlContext extends Context {
-  view: {
-    url: string
-    referrer: string
-  }
-}
-
-export interface InternalContext {
-  application_id: string
-  session_id: string | undefined
-  view?: {
-    id: string
-    url: string
-    referrer: string
-    name?: string
-  }
-  user_action?: {
-    id: string
-  }
-}
-
-export interface User {
-  id?: string | undefined
-  email?: string | undefined
-  name?: string | undefined
-  [key: string]: unknown
 }
 
 export interface CommonContext {

@@ -1,19 +1,26 @@
-import { addEventListener, DOM_EVENT, EventEmitter, monitor, TimeoutId } from '@datadog/browser-core'
-import { LifeCycle, LifeCycleEventType, ParentContexts, RumSessionManager } from '@datadog/browser-rum-core'
-import { SEND_BEACON_BYTE_LENGTH_LIMIT } from '../../transport/send'
-import { CreationReason, Record, SegmentContext, SegmentMeta } from '../../types'
-import { DeflateWorker } from './deflateWorker'
+import type { HttpRequest, TimeoutId } from '@datadog/browser-core'
+import { ONE_SECOND, monitor } from '@datadog/browser-core'
+import type { LifeCycle, ViewContexts, RumSessionManager } from '@datadog/browser-rum-core'
+import { LifeCycleEventType } from '@datadog/browser-rum-core'
+import type { BrowserRecord, CreationReason, SegmentContext } from '../../types'
+import type { DeflateWorker } from './deflateWorker'
+import { buildReplayPayload } from './buildReplayPayload'
+import type { FlushReason } from './segment'
 import { Segment } from './segment'
 
-export const MAX_SEGMENT_DURATION = 30_000
-let MAX_SEGMENT_SIZE = SEND_BEACON_BYTE_LENGTH_LIMIT
+export const SEGMENT_DURATION_LIMIT = 30 * ONE_SECOND
+/**
+ * beacon payload max queue size implementation is 64kb
+ * ensure that we leave room for logs, rum and potential other users
+ */
+export let SEGMENT_BYTES_LIMIT = 60_000
 
 // Segments are the main data structure for session replays. They contain context information used
 // for indexing or UI needs, and a list of records (RRWeb 'events', renamed to avoid confusing
 // namings). They are stored without any processing from the intake, and fetched one after the
 // other while a session is being replayed. Their encoding (deflate) are carefully crafted to allow
-// concatenating multiple segments together. Segments have a size overhead (meta), so our goal is to
-// build segments containing as much records as possible while complying with the various flush
+// concatenating multiple segments together. Segments have a size overhead (metadata), so our goal is to
+// build segments containing as many records as possible while complying with the various flush
 // strategies to guarantee a good replay quality.
 //
 // When the recording starts, a segment is initially created.  The segment is flushed (finalized and
@@ -21,7 +28,7 @@ let MAX_SEGMENT_SIZE = SEND_BEACON_BYTE_LENGTH_LIMIT
 //
 // * the page visibility change or becomes to unload
 // * the segment duration reaches a limit
-// * the encoded segment size reaches a limit
+// * the encoded segment bytes count reaches a limit
 // * ...
 //
 // A segment cannot be created without its context.  If the RUM session ends and no session id is
@@ -37,14 +44,14 @@ export function startSegmentCollection(
   lifeCycle: LifeCycle,
   applicationId: string,
   sessionManager: RumSessionManager,
-  parentContexts: ParentContexts,
-  send: (data: Uint8Array, meta: SegmentMeta, rawSegmentSize: number, flushReason?: string) => void,
+  viewContexts: ViewContexts,
+  httpRequest: HttpRequest,
   worker: DeflateWorker
 ) {
   return doStartSegmentCollection(
     lifeCycle,
-    () => computeSegmentContext(applicationId, sessionManager, parentContexts),
-    send,
+    () => computeSegmentContext(applicationId, sessionManager, viewContexts),
+    httpRequest,
     worker
   )
 }
@@ -71,9 +78,8 @@ type SegmentCollectionState =
 export function doStartSegmentCollection(
   lifeCycle: LifeCycle,
   getSegmentContext: () => SegmentContext | undefined,
-  send: (data: Uint8Array, meta: SegmentMeta, rawSegmentSize: number, flushReason?: string) => void,
-  worker: DeflateWorker,
-  emitter: EventEmitter = window
+  httpRequest: HttpRequest,
+  worker: DeflateWorker
 ) {
   let state: SegmentCollectionState = {
     status: SegmentCollectionStatus.WaitingForInitialRecord,
@@ -84,31 +90,23 @@ export function doStartSegmentCollection(
     flushSegment('view_change')
   })
 
-  const { unsubscribe: unsubscribeBeforeUnload } = lifeCycle.subscribe(LifeCycleEventType.BEFORE_UNLOAD, () => {
-    flushSegment('before_unload')
-  })
-
-  const { stop: unsubscribeVisibilityChange } = addEventListener(
-    emitter,
-    DOM_EVENT.VISIBILITY_CHANGE,
-    () => {
-      if (document.visibilityState === 'hidden') {
-        flushSegment('visibility_hidden')
-      }
-    },
-    { capture: true }
+  const { unsubscribe: unsubscribePageExited } = lifeCycle.subscribe(
+    LifeCycleEventType.PAGE_EXITED,
+    (pageExitEvent) => {
+      flushSegment(pageExitEvent.reason)
+    }
   )
 
-  function flushSegment(nextSegmentCreationReason?: CreationReason) {
+  function flushSegment(flushReason: FlushReason) {
     if (state.status === SegmentCollectionStatus.SegmentPending) {
-      state.segment.flush(nextSegmentCreationReason || 'sdk_stopped')
+      state.segment.flush(flushReason)
       clearTimeout(state.expirationTimeoutId)
     }
 
-    if (nextSegmentCreationReason) {
+    if (flushReason !== 'stop') {
       state = {
         status: SegmentCollectionStatus.WaitingForInitialRecord,
-        nextSegmentCreationReason,
+        nextSegmentCreationReason: flushReason,
       }
     } else {
       state = {
@@ -117,7 +115,7 @@ export function doStartSegmentCollection(
     }
   }
 
-  function createNewSegment(creationReason: CreationReason, initialRecord: Record) {
+  function createNewSegment(creationReason: CreationReason, initialRecord: BrowserRecord) {
     const context = getSegmentContext()
     if (!context) {
       return
@@ -128,13 +126,18 @@ export function doStartSegmentCollection(
       context,
       creationReason,
       initialRecord,
-      (compressedSegmentSize) => {
-        if (!segment.isFlushed && compressedSegmentSize > MAX_SEGMENT_SIZE) {
-          flushSegment('max_size')
+      (compressedSegmentBytesCount) => {
+        if (!segment.flushReason && compressedSegmentBytesCount > SEGMENT_BYTES_LIMIT) {
+          flushSegment('segment_bytes_limit')
         }
       },
-      (data, rawSegmentSize) => {
-        send(data, segment.meta, rawSegmentSize, segment.flushReason)
+      (data, rawSegmentBytesCount) => {
+        const payload = buildReplayPayload(data, segment.metadata, rawSegmentBytesCount)
+        if (segment.flushReason === 'visibility_hidden' || segment.flushReason === 'before_unload') {
+          httpRequest.sendOnExit(payload)
+        } else {
+          httpRequest.send(payload)
+        }
       }
     )
 
@@ -143,15 +146,15 @@ export function doStartSegmentCollection(
       segment,
       expirationTimeoutId: setTimeout(
         monitor(() => {
-          flushSegment('max_duration')
+          flushSegment('segment_duration_limit')
         }),
-        MAX_SEGMENT_DURATION
+        SEGMENT_DURATION_LIMIT
       ),
     }
   }
 
   return {
-    addRecord: (record: Record) => {
+    addRecord: (record: BrowserRecord) => {
       switch (state.status) {
         case SegmentCollectionStatus.WaitingForInitialRecord:
           createNewSegment(state.nextSegmentCreationReason, record)
@@ -164,10 +167,9 @@ export function doStartSegmentCollection(
     },
 
     stop: () => {
-      flushSegment()
+      flushSegment('stop')
       unsubscribeViewCreated()
-      unsubscribeBeforeUnload()
-      unsubscribeVisibilityChange()
+      unsubscribePageExited()
     },
   }
 }
@@ -175,10 +177,10 @@ export function doStartSegmentCollection(
 export function computeSegmentContext(
   applicationId: string,
   sessionManager: RumSessionManager,
-  parentContexts: ParentContexts
+  viewContexts: ViewContexts
 ) {
   const session = sessionManager.findTrackedSession()
-  const viewContext = parentContexts.findView()
+  const viewContext = viewContexts.findView()
   if (!session || !viewContext) {
     return undefined
   }
@@ -190,11 +192,11 @@ export function computeSegmentContext(
       id: session.id,
     },
     view: {
-      id: viewContext.view.id,
+      id: viewContext.id,
     },
   }
 }
 
-export function setMaxSegmentSize(newSize: number = SEND_BEACON_BYTE_LENGTH_LIMIT) {
-  MAX_SEGMENT_SIZE = newSize
+export function setSegmentBytesLimit(newSegmentBytesLimit = 60_000) {
+  SEGMENT_BYTES_LIMIT = newSegmentBytesLimit
 }

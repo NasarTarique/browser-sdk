@@ -1,10 +1,11 @@
-import { IncrementalSource, ViewportResizeData, ScrollData } from '@datadog/browser-rum/cjs/types'
-import { RumInitConfiguration } from '@datadog/browser-rum-core'
+import type { ViewportResizeData, ScrollData } from '@datadog/browser-rum/cjs/types'
+import { IncrementalSource } from '@datadog/browser-rum/cjs/types'
+import type { RumInitConfiguration } from '@datadog/browser-rum-core'
 
 import { findAllIncrementalSnapshots, findAllVisualViewports } from '@datadog/browser-rum/test/utils'
-import { createTest, bundleSetup, html, EventRegistry } from '../../lib/framework'
-import { browserExecute } from '../../lib/helpers/browser'
-import { flushEvents } from '../../lib/helpers/flushEvents'
+import type { EventRegistry } from '../../lib/framework'
+import { flushEvents, createTest, bundleSetup, html } from '../../lib/framework'
+import { browserExecute, getBrowserName, getPlatformName } from '../../lib/helpers/browser'
 
 const NAVBAR_HEIGHT_CHANGE_UPPER_BOUND = 30
 const VIEWPORT_META_TAGS = `
@@ -24,7 +25,7 @@ describe('recorder', () => {
 
   describe('layout viewport properties', () => {
     createTest('getWindowWidth/Height should not be affected by pinch zoom')
-      .withRum({ enableExperimentalFeatures: ['visualviewport'] })
+      .withRum()
       .withRumInit(initRumAndStartRecording)
       .withSetup(bundleSetup)
       .withBody(html`${VIEWPORT_META_TAGS}`)
@@ -55,7 +56,7 @@ describe('recorder', () => {
      * We need to ensure that our measurements are not affected by pinch zoom
      */
     createTest('getScrollX/Y should not be affected by pinch scroll')
-      .withRum({ enableExperimentalFeatures: ['visualviewport'] })
+      .withRum()
       .withRumInit(initRumAndStartRecording)
       .withSetup(bundleSetup)
       .withBody(html`${VIEWPORT_META_TAGS}`)
@@ -97,7 +98,7 @@ describe('recorder', () => {
 
   describe('visual viewport properties', () => {
     createTest('pinch zoom "scroll" event reports visual viewport position')
-      .withRum({ enableExperimentalFeatures: ['visualviewport'] })
+      .withRum()
       .withRumInit(initRumAndStartRecording)
       .withSetup(bundleSetup)
       .withBody(html`${VIEWPORT_META_TAGS}`)
@@ -112,7 +113,7 @@ describe('recorder', () => {
       })
 
     createTest('pinch zoom "resize" event reports visual viewport scale')
-      .withRum({ enableExperimentalFeatures: ['visualviewport'] })
+      .withRum()
       .withRumInit(initRumAndStartRecording)
       .withSetup(bundleSetup)
       .withBody(html`${VIEWPORT_META_TAGS}`)
@@ -134,16 +135,8 @@ function initRumAndStartRecording(initConfiguration: RumInitConfiguration) {
   window.DD_RUM!.startSessionReplayRecording()
 }
 
-const isGestureUnsupported = () => {
-  const { capabilities } = browser
-  return (
-    capabilities.browserName === 'firefox' ||
-    capabilities.browserName === 'Safari' ||
-    capabilities.browserName === 'msedge' ||
-    capabilities.platformName === 'windows' ||
-    capabilities.platformName === 'linux'
-  )
-}
+const isGestureUnsupported = () =>
+  /firefox|safari|edge/.test(getBrowserName()) || /windows|linux/.test(getPlatformName())
 
 // Flakiness: Working with viewport sizes has variations per device of a few pixels
 function expectToBeNearby(numA: number, numB: number) {
@@ -298,7 +291,7 @@ function getScrollbarThickness(): Promise<number> {
 // Scrollbar edge-case handling not considered right now, further investigation needed
 async function getScrollbarThicknessCorrection(): Promise<number> {
   let scrollbarThickness = 0
-  if (browser.capabilities.browserName === 'chrome' && browser.capabilities.platformName === 'mac os x') {
+  if (getBrowserName() === 'chrome' && getPlatformName() === 'macos') {
     scrollbarThickness = await getScrollbarThickness()
   }
   return scrollbarThickness

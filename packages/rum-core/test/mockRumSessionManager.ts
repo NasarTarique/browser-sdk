@@ -1,41 +1,60 @@
-import { RumSessionManager, RumTrackingType } from '../src/domain/rumSessionManager'
+import type { RumSessionManager } from '../src/domain/rumSessionManager'
+import { RumSessionPlan } from '../src/domain/rumSessionManager'
 
 export interface RumSessionManagerMock extends RumSessionManager {
   setId(id: string): RumSessionManagerMock
   setNotTracked(): RumSessionManagerMock
-  setReplayPlan(): RumSessionManagerMock
-  setLitePlan(): RumSessionManagerMock
+  setPlanWithoutSessionReplay(): RumSessionManagerMock
+  setPlanWithSessionReplay(): RumSessionManagerMock
+  setLongTaskAllowed(longTaskAllowed: boolean): RumSessionManagerMock
+  setResourceAllowed(resourceAllowed: boolean): RumSessionManagerMock
 }
 
 const DEFAULT_ID = 'session-id'
 
 export function createRumSessionManagerMock(): RumSessionManagerMock {
   let id = DEFAULT_ID
-  let trackingType = RumTrackingType.TRACKED_REPLAY
+  let tracked = true
+  let sessionReplayAllowed = true
+  let resourceAllowed = true
+  let longTaskAllowed = true
   return {
     findTrackedSession() {
-      return trackingType !== RumTrackingType.NOT_TRACKED
-        ? {
-            id,
-            hasLitePlan: trackingType === RumTrackingType.TRACKED_LITE,
-            hasReplayPlan: trackingType === RumTrackingType.TRACKED_REPLAY,
-          }
-        : undefined
+      if (!tracked) {
+        return undefined
+      }
+      return {
+        id,
+        plan: sessionReplayAllowed ? RumSessionPlan.WITH_SESSION_REPLAY : RumSessionPlan.WITHOUT_SESSION_REPLAY,
+        sessionReplayAllowed,
+        longTaskAllowed,
+        resourceAllowed,
+      }
     },
     setId(newId) {
       id = newId
       return this
     },
     setNotTracked() {
-      trackingType = RumTrackingType.NOT_TRACKED
+      tracked = false
       return this
     },
-    setLitePlan() {
-      trackingType = RumTrackingType.TRACKED_LITE
+    setPlanWithoutSessionReplay() {
+      tracked = true
+      sessionReplayAllowed = false
       return this
     },
-    setReplayPlan() {
-      trackingType = RumTrackingType.TRACKED_REPLAY
+    setPlanWithSessionReplay() {
+      tracked = true
+      sessionReplayAllowed = true
+      return this
+    },
+    setLongTaskAllowed(isAllowed: boolean) {
+      longTaskAllowed = isAllowed
+      return this
+    },
+    setResourceAllowed(isAllowed: boolean) {
+      resourceAllowed = isAllowed
       return this
     },
   }

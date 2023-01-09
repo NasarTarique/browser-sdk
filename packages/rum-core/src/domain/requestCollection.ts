@@ -1,46 +1,54 @@
-import {
+import type {
   Duration,
-  RequestType,
-  initFetchObservable,
-  initXhrObservable,
   XhrCompleteContext,
   XhrStartContext,
   ClocksState,
   FetchStartContext,
-  FetchCompleteContext,
+  FetchResolveContext,
 } from '@datadog/browser-core'
-import { RumSessionManager } from '..'
-import { RumConfiguration } from './configuration'
-import { LifeCycle, LifeCycleEventType } from './lifeCycle'
+import {
+  RequestType,
+  initFetchObservable,
+  initXhrObservable,
+  readBytesFromStream,
+  elapsed,
+  timeStampNow,
+} from '@datadog/browser-core'
+import type { RumSessionManager } from '..'
+import type { RumConfiguration } from './configuration'
+import type { LifeCycle } from './lifeCycle'
+import { LifeCycleEventType } from './lifeCycle'
 import { isAllowedRequestUrl } from './rumEventsCollection/resource/resourceUtils'
-import { startTracer, TraceIdentifier, Tracer } from './tracing/tracer'
+import type { TraceIdentifier, Tracer } from './tracing/tracer'
+import { startTracer } from './tracing/tracer'
 
 export interface CustomContext {
   requestIndex: number
   spanId?: TraceIdentifier
   traceId?: TraceIdentifier
+  traceSampled?: boolean
 }
 export interface RumFetchStartContext extends FetchStartContext, CustomContext {}
-export interface RumFetchCompleteContext extends FetchCompleteContext, CustomContext {}
+export interface RumFetchResolveContext extends FetchResolveContext, CustomContext {}
 export interface RumXhrStartContext extends XhrStartContext, CustomContext {}
 export interface RumXhrCompleteContext extends XhrCompleteContext, CustomContext {}
 
 export interface RequestStartEvent {
   requestIndex: number
+  url: string
 }
-
 export interface RequestCompleteEvent {
   requestIndex: number
   type: RequestType
   method: string
   url: string
   status: number
-  responseText?: string
   responseType?: string
   startClocks: ClocksState
   duration: Duration
   spanId?: TraceIdentifier
   traceId?: TraceIdentifier
+  traceSampled?: boolean
   xhr?: XMLHttpRequest
   response?: Response
   input?: RequestInfo
@@ -74,6 +82,7 @@ export function trackXhr(lifeCycle: LifeCycle, configuration: RumConfiguration, 
 
         lifeCycle.notify(LifeCycleEventType.REQUEST_STARTED, {
           requestIndex: context.requestIndex,
+          url: context.url,
         })
         break
       case 'complete':
@@ -82,11 +91,11 @@ export function trackXhr(lifeCycle: LifeCycle, configuration: RumConfiguration, 
           duration: context.duration,
           method: context.method,
           requestIndex: context.requestIndex,
-          responseText: context.responseText,
           spanId: context.spanId,
           startClocks: context.startClocks,
           status: context.status,
           traceId: context.traceId,
+          traceSampled: context.traceSampled,
           type: RequestType.XHR,
           url: context.url,
           xhr: context.xhr,
@@ -100,7 +109,7 @@ export function trackXhr(lifeCycle: LifeCycle, configuration: RumConfiguration, 
 
 export function trackFetch(lifeCycle: LifeCycle, configuration: RumConfiguration, tracer: Tracer) {
   const subscription = initFetchObservable().subscribe((rawContext) => {
-    const context = rawContext as RumFetchCompleteContext | RumFetchStartContext
+    const context = rawContext as RumFetchResolveContext | RumFetchStartContext
     if (!isAllowedRequestUrl(configuration, context.url)) {
       return
     }
@@ -112,26 +121,28 @@ export function trackFetch(lifeCycle: LifeCycle, configuration: RumConfiguration
 
         lifeCycle.notify(LifeCycleEventType.REQUEST_STARTED, {
           requestIndex: context.requestIndex,
+          url: context.url,
         })
         break
-      case 'complete':
-        tracer.clearTracingIfNeeded(context)
-
-        lifeCycle.notify(LifeCycleEventType.REQUEST_COMPLETED, {
-          duration: context.duration,
-          method: context.method,
-          requestIndex: context.requestIndex,
-          responseText: context.responseText,
-          responseType: context.responseType,
-          spanId: context.spanId,
-          startClocks: context.startClocks,
-          status: context.status,
-          traceId: context.traceId,
-          type: RequestType.FETCH,
-          url: context.url,
-          response: context.response,
-          init: context.init,
-          input: context.input,
+      case 'resolve':
+        waitForResponseToComplete(context, (duration: Duration) => {
+          tracer.clearTracingIfNeeded(context)
+          lifeCycle.notify(LifeCycleEventType.REQUEST_COMPLETED, {
+            duration,
+            method: context.method,
+            requestIndex: context.requestIndex,
+            responseType: context.responseType,
+            spanId: context.spanId,
+            startClocks: context.startClocks,
+            status: context.status,
+            traceId: context.traceId,
+            traceSampled: context.traceSampled,
+            type: RequestType.FETCH,
+            url: context.url,
+            response: context.response,
+            init: context.init,
+            input: context.input,
+          })
         })
         break
     }
@@ -143,4 +154,24 @@ function getNextRequestIndex() {
   const result = nextRequestIndex
   nextRequestIndex += 1
   return result
+}
+
+function waitForResponseToComplete(context: RumFetchResolveContext, callback: (duration: Duration) => void) {
+  if (context.response) {
+    const responseClone = context.response.clone()
+    if (responseClone.body) {
+      readBytesFromStream(
+        responseClone.body,
+        () => {
+          callback(elapsed(context.startClocks.timeStamp, timeStampNow()))
+        },
+        {
+          bytesLimit: Number.POSITIVE_INFINITY,
+          collectStreamBody: false,
+        }
+      )
+      return
+    }
+  }
+  callback(elapsed(context.startClocks.timeStamp, timeStampNow()))
 }

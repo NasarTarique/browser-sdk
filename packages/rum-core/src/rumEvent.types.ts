@@ -42,6 +42,16 @@ export type RumActionEvent = CommonProperties & {
       [k: string]: unknown
     }
     /**
+     * Action frustration properties
+     */
+    readonly frustration?: {
+      /**
+       * Action frustration types
+       */
+      readonly type: ('rage_click' | 'dead_click' | 'error_click' | 'rage_tap' | 'error_tap')[]
+      [k: string]: unknown
+    }
+    /**
      * Properties of the errors of the action
      */
     readonly error?: {
@@ -93,72 +103,368 @@ export type RumActionEvent = CommonProperties & {
     readonly in_foreground?: boolean
     [k: string]: unknown
   }
+  /**
+   * Internal properties
+   */
+  _dd?: {
+    /**
+     * Action properties
+     */
+    readonly action?: {
+      /**
+       * Action position properties
+       */
+      readonly position?: {
+        /**
+         * X coordinate relative to the target element of the action (in pixels)
+         */
+        readonly x: number
+        /**
+         * Y coordinate relative to the target element of the action (in pixels)
+         */
+        readonly y: number
+        [k: string]: unknown
+      }
+      /**
+       * Target properties
+       */
+      target?: {
+        /**
+         * CSS selector path of the target element
+         */
+        readonly selector?: string
+        /**
+         * Width of the target element (in pixels)
+         */
+        readonly width?: number
+        /**
+         * Height of the target element (in pixels)
+         */
+        readonly height?: number
+        [k: string]: unknown
+      }
+      [k: string]: unknown
+    }
+    [k: string]: unknown
+  }
   [k: string]: unknown
 }
 /**
  * Schema of all properties of an Error event
  */
-export type RumErrorEvent = CommonProperties & {
-  /**
-   * RUM event type
-   */
-  readonly type: 'error'
-  /**
-   * Error properties
-   */
-  readonly error: {
+export type RumErrorEvent = CommonProperties &
+  ActionChildProperties & {
     /**
-     * UUID of the error
+     * RUM event type
      */
-    readonly id?: string
+    readonly type: 'error'
     /**
-     * Error message
+     * Error properties
      */
-    message: string
+    readonly error: {
+      /**
+       * UUID of the error
+       */
+      readonly id?: string
+      /**
+       * Error message
+       */
+      message: string
+      /**
+       * Source of the error
+       */
+      readonly source: 'network' | 'source' | 'console' | 'logger' | 'agent' | 'webview' | 'custom' | 'report'
+      /**
+       * Stacktrace of the error
+       */
+      stack?: string
+      /**
+       * Causes of the error
+       */
+      causes?: {
+        /**
+         * Error message
+         */
+        message: string
+        /**
+         * The type of the error
+         */
+        readonly type?: string
+        /**
+         * Stacktrace of the error
+         */
+        stack?: string
+        /**
+         * Source of the error
+         */
+        readonly source: 'network' | 'source' | 'console' | 'logger' | 'agent' | 'webview' | 'custom' | 'report'
+        [k: string]: unknown
+      }[]
+      /**
+       * Whether this error crashed the host application
+       */
+      readonly is_crash?: boolean
+      /**
+       * The type of the error
+       */
+      readonly type?: string
+      /**
+       * Whether the error has been handled manually in the source code or not
+       */
+      readonly handling?: 'handled' | 'unhandled'
+      /**
+       * Handling call stack
+       */
+      readonly handling_stack?: string
+      /**
+       * Source type of the error (the language or platform impacting the error stacktrace format)
+       */
+      readonly source_type?: 'android' | 'browser' | 'ios' | 'react-native' | 'flutter' | 'roku'
+      /**
+       * Resource properties of the error
+       */
+      readonly resource?: {
+        /**
+         * HTTP method of the resource
+         */
+        readonly method: 'POST' | 'GET' | 'HEAD' | 'PUT' | 'DELETE' | 'PATCH'
+        /**
+         * HTTP Status code of the resource
+         */
+        readonly status_code: number
+        /**
+         * URL of the resource
+         */
+        url: string
+        /**
+         * The provider for this resource
+         */
+        readonly provider?: {
+          /**
+           * The domain name of the provider
+           */
+          readonly domain?: string
+          /**
+           * The user friendly name of the provider
+           */
+          readonly name?: string
+          /**
+           * The type of provider
+           */
+          readonly type?:
+            | 'ad'
+            | 'advertising'
+            | 'analytics'
+            | 'cdn'
+            | 'content'
+            | 'customer-success'
+            | 'first party'
+            | 'hosting'
+            | 'marketing'
+            | 'other'
+            | 'social'
+            | 'tag-manager'
+            | 'utility'
+            | 'video'
+          [k: string]: unknown
+        }
+        [k: string]: unknown
+      }
+      [k: string]: unknown
+    }
     /**
-     * Source of the error
+     * View properties
      */
-    readonly source: 'network' | 'source' | 'console' | 'logger' | 'agent' | 'webview' | 'custom'
+    readonly view?: {
+      /**
+       * Is the error starting in the foreground (focus in browser)
+       */
+      readonly in_foreground?: boolean
+      [k: string]: unknown
+    }
     /**
-     * Stacktrace of the error
+     * Feature flags properties
      */
-    stack?: string
+    readonly feature_flags?: {
+      [k: string]: unknown
+    }
+    [k: string]: unknown
+  }
+/**
+ * Schema of all properties of a Long Task event
+ */
+export type RumLongTaskEvent = CommonProperties &
+  ActionChildProperties & {
     /**
-     * Whether this error crashed the host application
+     * RUM event type
      */
-    readonly is_crash?: boolean
+    readonly type: 'long_task'
     /**
-     * The type of the error
+     * Long Task properties
      */
-    readonly type?: string
+    readonly long_task: {
+      /**
+       * UUID of the long task
+       */
+      readonly id?: string
+      /**
+       * Duration in ns of the long task
+       */
+      readonly duration: number
+      /**
+       * Whether this long task is considered a frozen frame
+       */
+      readonly is_frozen_frame?: boolean
+      [k: string]: unknown
+    }
     /**
-     * Whether the error has been handled manually in the source code or not
+     * Internal properties
      */
-    readonly handling?: 'handled' | 'unhandled'
+    readonly _dd?: {
+      /**
+       * Whether the long task should be discarded or indexed
+       */
+      readonly discarded?: boolean
+      [k: string]: unknown
+    }
+    [k: string]: unknown
+  }
+/**
+ * Schema of all properties of a Resource event
+ */
+export type RumResourceEvent = CommonProperties &
+  ActionChildProperties & {
     /**
-     * Handling call stack
+     * RUM event type
      */
-    readonly handling_stack?: string
+    readonly type: 'resource'
     /**
-     * Source type of the error (the language or platform impacting the error stacktrace format)
+     * Resource properties
      */
-    readonly source_type?: 'android' | 'browser' | 'ios' | 'react-native'
-    /**
-     * Resource properties of the error
-     */
-    readonly resource?: {
+    readonly resource: {
+      /**
+       * UUID of the resource
+       */
+      readonly id?: string
+      /**
+       * Resource type
+       */
+      readonly type:
+        | 'document'
+        | 'xhr'
+        | 'beacon'
+        | 'fetch'
+        | 'css'
+        | 'js'
+        | 'image'
+        | 'font'
+        | 'media'
+        | 'other'
+        | 'native'
       /**
        * HTTP method of the resource
        */
-      readonly method: 'POST' | 'GET' | 'HEAD' | 'PUT' | 'DELETE' | 'PATCH'
-      /**
-       * HTTP Status code of the resource
-       */
-      readonly status_code: number
+      readonly method?: 'POST' | 'GET' | 'HEAD' | 'PUT' | 'DELETE' | 'PATCH'
       /**
        * URL of the resource
        */
       url: string
+      /**
+       * HTTP status code of the resource
+       */
+      readonly status_code?: number
+      /**
+       * Duration of the resource
+       */
+      readonly duration: number
+      /**
+       * Size in octet of the resource response body
+       */
+      readonly size?: number
+      /**
+       * Redirect phase properties
+       */
+      readonly redirect?: {
+        /**
+         * Duration in ns of the resource redirect phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the redirect phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
+      /**
+       * DNS phase properties
+       */
+      readonly dns?: {
+        /**
+         * Duration in ns of the resource dns phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the dns phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
+      /**
+       * Connect phase properties
+       */
+      readonly connect?: {
+        /**
+         * Duration in ns of the resource connect phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the connect phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
+      /**
+       * SSL phase properties
+       */
+      readonly ssl?: {
+        /**
+         * Duration in ns of the resource ssl phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the ssl phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
+      /**
+       * First Byte phase properties
+       */
+      readonly first_byte?: {
+        /**
+         * Duration in ns of the resource first byte phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the first byte phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
+      /**
+       * Download phase properties
+       */
+      readonly download?: {
+        /**
+         * Duration in ns of the resource download phase
+         */
+        readonly duration: number
+        /**
+         * Duration in ns between start of the request and start of the download phase
+         */
+        readonly start: number
+        [k: string]: unknown
+      }
       /**
        * The provider for this resource
        */
@@ -193,263 +499,30 @@ export type RumErrorEvent = CommonProperties & {
       }
       [k: string]: unknown
     }
-    [k: string]: unknown
-  }
-  /**
-   * Action properties
-   */
-  readonly action?: {
     /**
-     * UUID of the action
+     * Internal properties
      */
-    readonly id: string
-    [k: string]: unknown
-  }
-  /**
-   * View properties
-   */
-  readonly view?: {
-    /**
-     * Is the error starting in the foreground (focus in browser)
-     */
-    readonly in_foreground?: boolean
-    [k: string]: unknown
-  }
-  [k: string]: unknown
-}
-/**
- * Schema of all properties of a Long Task event
- */
-export type RumLongTaskEvent = CommonProperties & {
-  /**
-   * RUM event type
-   */
-  readonly type: 'long_task'
-  /**
-   * Long Task properties
-   */
-  readonly long_task: {
-    /**
-     * UUID of the long task
-     */
-    readonly id?: string
-    /**
-     * Duration in ns of the long task
-     */
-    readonly duration: number
-    /**
-     * Whether this long task is considered a frozen frame
-     */
-    readonly is_frozen_frame?: boolean
-    [k: string]: unknown
-  }
-  /**
-   * Action properties
-   */
-  readonly action?: {
-    /**
-     * UUID of the action
-     */
-    readonly id: string
-    [k: string]: unknown
-  }
-  [k: string]: unknown
-}
-/**
- * Schema of all properties of a Resource event
- */
-export type RumResourceEvent = CommonProperties & {
-  /**
-   * RUM event type
-   */
-  readonly type: 'resource'
-  /**
-   * Resource properties
-   */
-  readonly resource: {
-    /**
-     * UUID of the resource
-     */
-    readonly id?: string
-    /**
-     * Resource type
-     */
-    readonly type:
-      | 'document'
-      | 'xhr'
-      | 'beacon'
-      | 'fetch'
-      | 'css'
-      | 'js'
-      | 'image'
-      | 'font'
-      | 'media'
-      | 'other'
-      | 'native'
-    /**
-     * HTTP method of the resource
-     */
-    readonly method?: 'POST' | 'GET' | 'HEAD' | 'PUT' | 'DELETE' | 'PATCH'
-    /**
-     * URL of the resource
-     */
-    url: string
-    /**
-     * HTTP status code of the resource
-     */
-    readonly status_code?: number
-    /**
-     * Duration of the resource
-     */
-    readonly duration: number
-    /**
-     * Size in octet of the resource response body
-     */
-    readonly size?: number
-    /**
-     * Redirect phase properties
-     */
-    readonly redirect?: {
+    readonly _dd?: {
       /**
-       * Duration in ns of the resource redirect phase
+       * span identifier in decimal format
        */
-      readonly duration: number
+      readonly span_id?: string
       /**
-       * Duration in ns between start of the request and start of the redirect phase
+       * trace identifier in decimal format
        */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * DNS phase properties
-     */
-    readonly dns?: {
+      readonly trace_id?: string
       /**
-       * Duration in ns of the resource dns phase
+       * trace sample rate in decimal format
        */
-      readonly duration: number
+      readonly rule_psr?: number
       /**
-       * Duration in ns between start of the request and start of the dns phase
+       * Whether the resource should be discarded or indexed
        */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * Connect phase properties
-     */
-    readonly connect?: {
-      /**
-       * Duration in ns of the resource connect phase
-       */
-      readonly duration: number
-      /**
-       * Duration in ns between start of the request and start of the connect phase
-       */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * SSL phase properties
-     */
-    readonly ssl?: {
-      /**
-       * Duration in ns of the resource ssl phase
-       */
-      readonly duration: number
-      /**
-       * Duration in ns between start of the request and start of the ssl phase
-       */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * First Byte phase properties
-     */
-    readonly first_byte?: {
-      /**
-       * Duration in ns of the resource first byte phase
-       */
-      readonly duration: number
-      /**
-       * Duration in ns between start of the request and start of the first byte phase
-       */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * Download phase properties
-     */
-    readonly download?: {
-      /**
-       * Duration in ns of the resource download phase
-       */
-      readonly duration: number
-      /**
-       * Duration in ns between start of the request and start of the download phase
-       */
-      readonly start: number
-      [k: string]: unknown
-    }
-    /**
-     * The provider for this resource
-     */
-    readonly provider?: {
-      /**
-       * The domain name of the provider
-       */
-      readonly domain?: string
-      /**
-       * The user friendly name of the provider
-       */
-      readonly name?: string
-      /**
-       * The type of provider
-       */
-      readonly type?:
-        | 'ad'
-        | 'advertising'
-        | 'analytics'
-        | 'cdn'
-        | 'content'
-        | 'customer-success'
-        | 'first party'
-        | 'hosting'
-        | 'marketing'
-        | 'other'
-        | 'social'
-        | 'tag-manager'
-        | 'utility'
-        | 'video'
+      readonly discarded?: boolean
       [k: string]: unknown
     }
     [k: string]: unknown
   }
-  /**
-   * Action properties
-   */
-  readonly action?: {
-    /**
-     * UUID of the action
-     */
-    readonly id: string
-    [k: string]: unknown
-  }
-  /**
-   * Internal properties
-   */
-  readonly _dd?: {
-    /**
-     * span identifier in decimal format
-     */
-    readonly span_id?: string
-    /**
-     * trace identifier in decimal format
-     */
-    readonly trace_id?: string
-    [k: string]: unknown
-  }
-  [k: string]: unknown
-}
 /**
  * Schema of all properties of a View event
  */
@@ -499,7 +572,7 @@ export type RumViewEvent = CommonProperties & {
      */
     readonly first_input_time?: number
     /**
-     * Total layout shift score that occured on the view
+     * Total layout shift score that occurred on the view
      */
     readonly cumulative_layout_shift?: number
     /**
@@ -518,6 +591,10 @@ export type RumViewEvent = CommonProperties & {
      * Duration in ns to the end of the load event handler execution
      */
     readonly load_event?: number
+    /**
+     * Duration in ns to the response start of the document request
+     */
+    readonly first_byte?: number
     /**
      * User custom timings of the view. As timing name is used as facet path, it must contain only letters, digits, or the characters - _ . @ $
      */
@@ -593,6 +670,16 @@ export type RumViewEvent = CommonProperties & {
       [k: string]: unknown
     }
     /**
+     * Properties of the frustrations of the view
+     */
+    readonly frustration?: {
+      /**
+       * Number of frustrations that occurred on the view
+       */
+      readonly count: number
+      [k: string]: unknown
+    }
+    /**
      * List of the periods of time the user had the view in foreground (focused in the browser)
      */
     readonly in_foreground_periods?: {
@@ -630,6 +717,24 @@ export type RumViewEvent = CommonProperties & {
      * Minimum refresh rate during the view’s lifetime (in frames per second)
      */
     readonly refresh_rate_min?: number
+    /**
+     * Time taken for Flutter 'build' methods.
+     */
+    flutter_build_time?: RumPerfMetric
+    /**
+     * Time taken for Flutter to rasterize the view.
+     */
+    flutter_raster_time?: RumPerfMetric
+    /**
+     * The JavaScript refresh rate for React Native
+     */
+    js_refresh_rate?: RumPerfMetric
+    [k: string]: unknown
+  }
+  /**
+   * Feature flags properties
+   */
+  readonly feature_flags?: {
     [k: string]: unknown
   }
   /**
@@ -668,6 +773,10 @@ export interface CommonProperties {
    */
   readonly service?: string
   /**
+   * The version for this application
+   */
+  readonly version?: string
+  /**
    * Session properties
    */
   readonly session: {
@@ -685,6 +794,10 @@ export interface CommonProperties {
     readonly has_replay?: boolean
     [k: string]: unknown
   }
+  /**
+   * The source of this event
+   */
+  readonly source?: 'android' | 'ios' | 'browser' | 'flutter' | 'react-native' | 'roku'
   /**
    * View properties
    */
@@ -764,6 +877,26 @@ export interface CommonProperties {
     [k: string]: unknown
   }
   /**
+   * Display properties
+   */
+  display?: {
+    /**
+     * The viewport represents the rectangular area that is currently being viewed. Content outside the viewport is not visible onscreen until scrolled into view.
+     */
+    readonly viewport?: {
+      /**
+       * Width of the viewport (in pixels)
+       */
+      readonly width: number
+      /**
+       * Height of the viewport (in pixels)
+       */
+      readonly height: number
+      [k: string]: unknown
+    }
+    [k: string]: unknown
+  }
+  /**
    * Synthetics properties
    */
   readonly synthetics?: {
@@ -789,6 +922,51 @@ export interface CommonProperties {
      * The identifier of the current CI Visibility test execution
      */
     readonly test_execution_id: string
+    [k: string]: unknown
+  }
+  /**
+   * Operating system properties
+   */
+  os?: {
+    /**
+     * Operating system name, e.g. Android, iOS
+     */
+    readonly name: string
+    /**
+     * Full operating system version, e.g. 8.1.1
+     */
+    readonly version: string
+    /**
+     * Major operating system version, e.g. 8
+     */
+    readonly version_major: string
+    [k: string]: unknown
+  }
+  /**
+   * Device properties
+   */
+  device?: {
+    /**
+     * Device type info
+     */
+    readonly type: 'mobile' | 'desktop' | 'tablet' | 'tv' | 'gaming_console' | 'bot' | 'other'
+    /**
+     * Device marketing name, e.g. Xiaomi Redmi Note 8 Pro, Pixel 5, etc.
+     */
+    readonly name?: string
+    /**
+     * Device SKU model, e.g. Samsung SM-988GN, etc. Quite often name and model can be the same.
+     */
+    readonly model?: string
+    /**
+     * Device marketing brand, e.g. Apple, OPPO, Xiaomi, etc.
+     */
+    readonly brand?: string
+    /**
+     * The CPU architecture of the device that is reporting the error
+     */
+    readonly architecture?: string
+    [k: string]: unknown
   }
   /**
    * Internal properties
@@ -803,7 +981,7 @@ export interface CommonProperties {
      */
     session?: {
       /**
-       * Session plan: 1 is the 'lite' plan, 2 is the 'replay' plan
+       * Session plan: 1 is the plan without replay, 2 is the plan with replay
        */
       plan: 1 | 2
       [k: string]: unknown
@@ -820,5 +998,43 @@ export interface CommonProperties {
   context?: {
     [k: string]: unknown
   }
+  [k: string]: unknown
+}
+/**
+ * Schema of all properties of events that can have parent actions
+ */
+export interface ActionChildProperties {
+  /**
+   * Action properties
+   */
+  readonly action?: {
+    /**
+     * UUID of the action
+     */
+    readonly id: string | string[]
+    [k: string]: unknown
+  }
+  [k: string]: unknown
+}
+/**
+ * Schema of properties for a technical performance metric
+ */
+export interface RumPerfMetric {
+  /**
+   * The minimum value seen for this metric during the view's lifetime.
+   */
+  readonly min: number
+  /**
+   * The maximum value seen for this metric during the view's lifetime.
+   */
+  readonly max: number
+  /**
+   * The average value for this metric during the view's lifetime.
+   */
+  readonly average: number
+  /**
+   * The maximum possible value we could see for this metric, if such a max is relevant and can vary from session to session.
+   */
+  readonly metric_max?: number
   [k: string]: unknown
 }

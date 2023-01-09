@@ -2,36 +2,43 @@
 
 ## Overview
 
-Datadog Real User Monitoring (RUM) enables you to visualize and analyze the real-time performance and user journeys of your application's individual users.
+Datadog Real User Monitoring (RUM) enables you to visualize and analyze the real-time performance and user journeys of your application's individual users. To collect events, add the RUM Browser SDK to your browser application and configure what data is collected using initialization parameters.
 
 ## Setup
 
-To set up Datadog RUM browser monitoring:
+The RUM Browser SDK supports all modern desktop and mobile browsers including IE11. For more information, see the [Browser Support][8] table.
 
-1. In Datadog, navigate to the [Real User Monitoring page][1] and click the **New Application** button.
-2. Enter a name for your application and click **Generate Client Token**. This generates a `clientToken` and an `applicationId` for your application.
-3. Setup the Datadog RUM SDK via [npm](#npm) or via one of the hosted versions: [CDN async](#cdn-async) or [CDN sync](#cdn-sync).
-4. Deploy the changes to your application. Once your deployment is live, Datadog collects events from user browsers.
-5. Visualize the [data collected][2] using Datadog [dashboards][3].
+To set up RUM Browser Monitoring, create a RUM application:
 
-**Note**: Your application shows up on the application list page as "pending" until Datadog starts receiving data.
+1. In Datadog, navigate to the [**RUM Applications** page][1] and click the **New Application** button.
+   - Enter a name for your application and click **Generate Client Token**. This generates a `clientToken` and an `applicationId` for your application.
+   - Choose the installation type for the RUM Browser SDK: [npm](#npm), or a hosted version ([CDN async](#cdn-async) or [CDN sync](#cdn-sync)).
+   - Define the environment name and service name for your application to use unified service tagging for [RUM & Session Replay][19]. Set a version number for your deployed application in the initialization snippet. For more information, see [Tagging](#tagging).
+   - Set the sampling rate of total user sessions collected and use the slider to set the percentage of total [Browser RUM & Session Replay][11] sessions collected. Browser RUM & Session Replay sessions include resources, long tasks, and replay recordings. For more information about configuring the percentage of Browser RUM & Session Replay sessions collected from the total amount of user sessions, see [Configure Your Setup For Browser and Browser RUM & Session Replay Sampling][21].
+   - Click the **Session Replay Enabled** toggle to access replay recordings in [Session Replay][17].
+   - Select a [privacy setting][18] for Session Replay in the dropdown menu.
+2. Deploy the changes to your application. Once your deployment is live, Datadog collects events from your users' browsers.
+3. Visualize the [data collected][2] in [dashboards][3] or create a search query in the [RUM Explorer][16].
 
-**Supported browsers**: The RUM SDK supports all modern desktop and mobile browsers including IE11. See the [browser support][8] table.
+Until Datadog starts receiving data, your application appears as `pending` on the **RUM Applications** page.
 
 ### Choose the right installation method
 
 npm (node package manager)
-: This method is recommended for modern web applications. The RUM SDK gets packaged with the rest of your front-end javascript code. It has no impact on page load performance. However, the SDK might miss errors, resources and user actions triggered before the SDK is initialized. **Note:** it is recommended to use a matching version with logs SDK if used.
+: This method is recommended for modern web applications. The RUM Browser SDK is packaged with the rest of your front-end JavaScript code. It has no impact on page load performance. However, the SDK may miss errors, resources, and user actions triggered before the SDK is initialized. Datadog recommends using a matching version with the Browser Logs SDK.
 
 CDN async
-: This method is recommended for web applications with performance targets. The RUM SDK is loaded from our CDN asynchronously: this method ensures the SDK download does not impact page load performance. However, the SDK might miss errors, resources and user actions triggered before the SDK is initialized.
+: This method is recommended for web applications with performance targets. The RUM Browser SDK loads from our CDN asynchronously, ensuring the SDK download does not impact page load performance. However, the SDK may miss errors, resources, and user actions triggered before the SDK is initialized.
 
 CDN sync
-: This method is recommended for collecting all RUM events. The RUM SDK is loaded from our CDN synchronously: this method ensures the SDK is loaded first and collects all errors, resources and user actions. This method might impact page load performance.
+: This method is recommended for collecting all RUM events. The RUM Browser SDK loads from our CDN synchronously, ensuring the SDK loads first and collects all errors, resources, and user actions. This method may impact page load performance.
 
 ### npm
 
 Add [`@datadog/browser-rum`][4] to your `package.json` file, then initialize it with:
+
+<details open>
+  <summary>Latest version</summary>
 
 ```javascript
 import { datadogRum } from '@datadog/browser-rum'
@@ -44,24 +51,74 @@ datadogRum.init({
   //  env: 'production',
   //  version: '1.0.0',
   sampleRate: 100,
+  sessionReplaySampleRate: 100, // if not included, the default is 100
+  trackResources: true,
+  trackLongTasks: true,
   trackInteractions: true,
 })
 ```
 
-**Note**: The `trackInteractions` parameter enables the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
+</details>
+
+<details>
+  <summary>before <code>v4.20.0</code></summary>
+
+```javascript
+import { datadogRum } from '@datadog/browser-rum'
+
+datadogRum.init({
+  applicationId: '<DATADOG_APPLICATION_ID>',
+  clientToken: '<DATADOG_CLIENT_TOKEN>',
+  site: '<DATADOG_SITE>',
+  //  service: 'my-web-application',
+  //  env: 'production',
+  //  version: '1.0.0',
+  sampleRate: 100,
+  premiumSampleRate: 100, // if not included, the default is 100
+  trackInteractions: true,
+})
+```
+
+</details>
+
+<details>
+  <summary>before <code>v4.10.2</code></summary>
+
+```javascript
+import { datadogRum } from '@datadog/browser-rum'
+
+datadogRum.init({
+  applicationId: '<DATADOG_APPLICATION_ID>',
+  clientToken: '<DATADOG_CLIENT_TOKEN>',
+  site: '<DATADOG_SITE>',
+  //  service: 'my-web-application',
+  //  env: 'production',
+  //  version: '1.0.0',
+  sampleRate: 100,
+  replaySampleRate: 100, // if not included, the default is 100
+  trackInteractions: true,
+})
+```
+
+</details>
+
+The `trackInteractions` and `trackFrustrations` parameters enable the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
 
 ### CDN async
 
 Add the generated code snippet to the head tag of every HTML page you want to monitor in your application.
 
+<details open>
+  <summary>Latest version</summary>
+
 <!-- prettier-ignore -->
 ```html
 <script>
- (function(h,o,u,n,d) {
-   h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}
-   d=o.createElement(u);d.async=1;d.src=n
-   n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
-})(window,document,'script','https://www.datadoghq-browser-agent.com/datadog-rum-v3.js','DD_RUM')
+  (function(h,o,u,n,d) {
+     h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}
+     d=o.createElement(u);d.async=1;d.src=n
+     n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
+  })(window,document,'script','https://www.datadoghq-browser-agent.com/datadog-rum-v4.js','DD_RUM')
   DD_RUM.onReady(function() {
     DD_RUM.init({
       clientToken: '<CLIENT_TOKEN>',
@@ -71,23 +128,88 @@ Add the generated code snippet to the head tag of every HTML page you want to mo
       //  env: 'production',
       //  version: '1.0.0',
       sampleRate: 100,
+      sessionReplaySampleRate: 100, // if not included, the default is 100
+      trackResources: true,
+      trackLongTasks: true,
       trackInteractions: true,
     })
   })
 </script>
 ```
 
-**Notes**:
+</details>
 
-- The `trackInteractions` parameter enables the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
-- Early RUM API calls must be wrapped in the `DD_RUM.onReady()` callback. This ensures the code only gets executed once the SDK is properly loaded.
+<details>
+  <summary>before<code>v4.20.0</code></summary>
+
+<!-- prettier-ignore -->
+```html
+<script>
+  (function(h,o,u,n,d) {
+     h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}
+     d=o.createElement(u);d.async=1;d.src=n
+     n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
+  })(window,document,'script','https://www.datadoghq-browser-agent.com/datadog-rum-v4.js','DD_RUM')
+  DD_RUM.onReady(function() {
+    DD_RUM.init({
+      clientToken: '<CLIENT_TOKEN>',
+      applicationId: '<APPLICATION_ID>',
+      site: '<DATADOG_SITE>',
+      //  service: 'my-web-application',
+      //  env: 'production',
+      //  version: '1.0.0',
+      sampleRate: 100,
+      premiumSampleRate: 100, // if not included, the default is 100
+      trackInteractions: true,
+    })
+  })
+</script>
+```
+
+</details>
+
+<details>
+  <summary>before<code>v4.10.2</code></summary>
+
+<!-- prettier-ignore -->
+```html
+<script>
+  (function(h,o,u,n,d) {
+     h=h[d]=h[d]||{q:[],onReady:function(c){h.q.push(c)}}
+     d=o.createElement(u);d.async=1;d.src=n
+     n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
+  })(window,document,'script','https://www.datadoghq-browser-agent.com/datadog-rum-v4.js','DD_RUM')
+  DD_RUM.onReady(function() {
+    DD_RUM.init({
+      clientToken: '<CLIENT_TOKEN>',
+      applicationId: '<APPLICATION_ID>',
+      site: '<DATADOG_SITE>',
+      //  service: 'my-web-application',
+      //  env: 'production',
+      //  version: '1.0.0',
+      sampleRate: 100,
+      replaySampleRate: 100, // if not included, the default is 100
+      trackInteractions: true,
+    })
+  })
+</script>
+```
+
+</details>
+
+The `trackInteractions` and `trackFrustrations` parameters enable the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
+
+Early RUM API calls must be wrapped in the `DD_RUM.onReady()` callback. This ensures the code only gets executed once the SDK is properly loaded.
 
 ### CDN sync
 
 Add the generated code snippet to the head tag (in front of any other script tags) of every HTML page you want to monitor in your application. Including the script tag higher and synchronized ensures Datadog RUM can collect all performance data and errors.
 
+<details open>
+  <summary>Latest version</summary>
+
 ```html
-<script src="https://www.datadoghq-browser-agent.com/datadog-rum-v3.js" type="text/javascript"></script>
+<script src="https://www.datadoghq-browser-agent.com/datadog-rum-v4.js" type="text/javascript"></script>
 <script>
   window.DD_RUM &&
     window.DD_RUM.init({
@@ -98,19 +220,69 @@ Add the generated code snippet to the head tag (in front of any other script tag
       //  env: 'production',
       //  version: '1.0.0',
       sampleRate: 100,
+      sessionReplaySampleRate: 100, // if not included, the default is 100
+      trackResources: true,
+      trackLongTasks: true,
       trackInteractions: true,
     })
 </script>
 ```
 
-**Notes**:
+</details>
 
-- The `trackInteractions` parameter enables the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
-- The `window.DD_RUM` check is used to prevent issues if a loading failure occurs with the RUM SDK.
+<details>
+  <summary>before<code>v4.20.0</code></summary>
+
+```html
+<script src="https://www.datadoghq-browser-agent.com/datadog-rum-v4.js" type="text/javascript"></script>
+<script>
+  window.DD_RUM &&
+    window.DD_RUM.init({
+      clientToken: '<CLIENT_TOKEN>',
+      applicationId: '<APPLICATION_ID>',
+      site: '<DATADOG_SITE>',
+      //  service: 'my-web-application',
+      //  env: 'production',
+      //  version: '1.0.0',
+      sampleRate: 100,
+      premiumSampleRate: 100, // if not included, the default is 100
+      trackInteractions: true,
+    })
+</script>
+```
+
+</details>
+
+<details>
+  <summary>before<code>v4.10.2</code></summary>
+
+```html
+<script src="https://www.datadoghq-browser-agent.com/datadog-rum-v4.js" type="text/javascript"></script>
+<script>
+  window.DD_RUM &&
+    window.DD_RUM.init({
+      clientToken: '<CLIENT_TOKEN>',
+      applicationId: '<APPLICATION_ID>',
+      site: '<DATADOG_SITE>',
+      //  service: 'my-web-application',
+      //  env: 'production',
+      //  version: '1.0.0',
+      sampleRate: 100,
+      replaySampleRate: 100, // if not included, the default is 100
+      trackInteractions: true,
+    })
+</script>
+```
+
+</details>
+
+The `trackInteractions` and `trackFrustrations` parameters enable the automatic collection of user clicks in your application. **Sensitive and private data** contained on your pages may be included to identify the elements interacted with.
+
+The `window.DD_RUM` check is used to prevent issues if a loading failure occurs with the RUM Browser SDK.
 
 ### TypeScript
 
-Types are compatible with TypeScript >= 3.8.2. For earlier versions, import JS sources and use global variables to avoid any compilation issues:
+Types are compatible with TypeScript >= 3.8.2. For earlier versions, import JavaScript sources and use global variables to avoid any compilation issues:
 
 ```javascript
 import '@datadog/browser-rum/bundle/datadog-rum'
@@ -120,6 +292,9 @@ window.DD_RUM.init({
   clientToken: 'XXX',
   site: 'datadoghq.com',
   sampleRate: 100,
+  sessionReplaySampleRate: 100, // if not included, the default is 100
+  trackResources: true,
+  trackLongTasks: true,
 })
 ```
 
@@ -127,7 +302,7 @@ window.DD_RUM.init({
 
 ### Initialization parameters
 
-The following parameters are available:
+Call the initialization command to start tracking. The following parameters are available:
 
 `applicationId`
 : Required<br/>
@@ -143,22 +318,22 @@ A [Datadog client token][5].
 : Required<br/>
 **Type**: String<br/>
 **Default**: `datadoghq.com`<br/>
-The Datadog site of your organization, same value as [agent site configuration][14].
+[The Datadog site parameter of your organization][14].
 
 `service`
 : Optional<br/>
 **Type**: String<br/>
-The service name for your application.
+The service name for your application. Follows the [tag syntax requirements][15].
 
 `env`
 : Optional<br/>
 **Type**: String<br/>
-The application’s environment, for example: prod, pre-prod, staging, etc.
+The application’s environment, for example: prod, pre-prod, and staging. Follows the [tag syntax requirements][15].
 
 `version`
 : Optional<br/>
 **Type**: String<br/>
-The application’s version, for example: 1.2.3, 6c44da20, 2020.02.13, etc.
+The application’s version, for example: 1.2.3, 6c44da20, and 2020.02.13. Follows the [tag syntax requirements][15].
 
 `trackViewsManually`
 : Optional<br/>
@@ -171,6 +346,24 @@ Allows you to control RUM views creation. See [override default RUM view names][
 **Type**: Boolean<br/>
 **Default**: `false` <br/>
 Enables [automatic collection of users actions][6].
+
+`trackFrustrations`
+: Optional<br/>
+**Type**: Boolean<br/>
+**Default**: `false` <br/>
+Enables [automatic collection of user frustrations][20]. Implies `trackInteractions: true`.
+
+`trackResources`
+: Optional<br/>
+**Type**: Boolean<br/>
+**Default**: `false` <br/>
+Enables collection of resource events.
+
+`trackLongTasks`
+: Optional<br/>
+**Type**: Boolean<br/>
+**Default**: `false` <br/>
+Enables collection of long task events.
 
 `defaultPrivacyLevel`
 : Optional<br/>
@@ -187,31 +380,60 @@ Specify your own attribute to be used to [name actions][9].
 : Optional<br/>
 **Type**: Number<br/>
 **Default**: `100`<br/>
-The percentage of sessions to track: `100` for all, `0` for none. Only tracked sessions send RUM events. For more details about `sampleRate`, see the [sampling configuration](#browser-and-session-replay-sampling-configuration).
+The percentage of sessions to track: `100` for all, `0` for none. Only tracked sessions send RUM events. For more details about `sampleRate`, see the [sampling configuration][21].
 
 `replaySampleRate`
+: Optional - **Deprecated**<br/>
+**Type**: Number<br/>
+**Default**: `100`<br/>
+See `sessionReplaySampleRate`.
+
+`premiumSampleRate`
+: Optional - **Deprecated**<br/>
+**Type**: Number<br/>
+**Default**: `100`<br/>
+See `sessionReplaySampleRate`.
+
+`sessionReplaySampleRate`
 : Optional<br/>
 **Type**: Number<br/>
 **Default**: `100`<br/>
-The percentage of tracked sessions with [Session Replay pricing][11] features: `100` for all, `0` for none. For more details about `replaySampleRate`, see the [sampling configuration](#browser-and-session-replay-sampling-configuration).
+The percentage of tracked sessions with [Browser RUM & Session Replay pricing][11] features: `100` for all, `0` for none. For more details about `sessionReplaySampleRate`, see the [sampling configuration][21].
 
 `silentMultipleInit`
 : Optional<br/>
 **Type**: Boolean <br/>
 **Default**: `false`<br/>
-Initialization fails silently if Datadog's RUM is already initialized on the page.
+Initialization fails silently if the RUM Browser SDK is already initialized on the page.
 
 `proxyUrl`
 : Optional<br/>
 **Type**: String<br/>
-Optional proxy URL (ex: https://www.proxy.com/path), see the full [proxy setup guide][7] for more information.
+Optional proxy URL, for example: https://www.proxy.com/path. For more information, see the full [proxy setup guide][7].
 
 `allowedTracingOrigins`
 : Optional<br/>
 **Type**: List<br/>
-A list of request origins used to inject tracing headers. See [Connect RUM and Traces][12].
+A list of request origins used to inject tracing headers. For more information, see [Connect RUM and Traces][12].
 
-Options that must have matching configuration when also using `logs` SDK:
+`tracingSampleRate`
+: Optional<br/>
+**Type**: Number<br/>
+**Default**: `100`<br/>
+The percentage of requests to trace: `100` for all, `0` for none. For more information, see [Connect RUM and Traces][12].
+
+`telemetrySampleRate`
+: Optional<br/>
+**Type**: Number<br/>
+**Default**: `20`<br/>
+Telemetry data (such as errors and debug logs) about SDK execution is sent to Datadog in order to detect and solve potential issues. Set this option to `0` to opt out from telemetry collection.
+
+`excludedActivityUrls`
+: Optional<br/>
+**Type:** List<br/>
+A list of request origins ignored when computing the page activity. See [How page activity is calculated][16].
+
+Options that must have matching configuration when you are using the Logs Browser SDK:
 
 `trackSessionAcrossSubdomains`
 : Optional<br/>
@@ -229,69 +451,85 @@ Use a secure session cookie. This disables RUM events sent on insecure (non-HTTP
 : Optional<br/>
 **Type**: Boolean<br/>
 **Default**:`false`<br/>
-Use a secure cross-site session cookie. This allows the RUM SDK to run when the site is loaded from another one (iframe). Implies `useSecureSessionCookie`.
+Use a secure cross-site session cookie. This allows the RUM Browser SDK to run when the site is loaded from another one (iframe). Implies `useSecureSessionCookie`.
+
+### Tagging
+
+A service is an independent, deployable code repository that maps to a set of pages.
+
+- If your browser application was constructed as a monolith, your RUM application has one service name for the application.
+- If your browser application was constructed as separate repositories for multiple pages, edit the default service names throughout the lifecycle of your application.
+
+### Access internal context
+
+After the Datadog browser RUM SDK is initialized, you can access the internal context of the SDK.
+
+You can explore the following attributes:
+
+| Attribute      | Description                                                       |
+| -------------- | ----------------------------------------------------------------- |
+| application_id | ID of the application.                                            |
+| session_id     | ID of the session.                                                |
+| user_action    | Object containing action ID (or undefined if no action is found). |
+| view           | Object containing details about the current view event.           |
+
+For more information, see [RUM Browser Data Collected][2].
 
 #### Example
 
-Init must be called to start the tracking:
+```
+{
+  application_id : "xxx",
+  session_id : "xxx",
+  user_action: { id: "xxx" },
+  view : {
+    id : "xxx",
+    referrer : "",
+    url: "http://localhost:8080/",
+    name: "homepage"
+  }
+}
+```
+
+You can optionally use `startTime` parameter to get the context of a specific time. If the parameter is omitted, the current context is returned.
 
 ```
-init(configuration: {
-    applicationId: string,
-    clientToken: string,
-    site?: string,
-    sampleRate?: number,
-    silentMultipleInit?: boolean,
-    trackInteractions?: boolean,
-    service?: string,
-    env?: string,
-    version?: string,
-    allowedTracingOrigins?: Array<String|Regexp>,
-    trackSessionAcrossSubdomains?: boolean,
-    useSecureSessionCookie?: boolean,
-    useCrossSiteSessionCookie?: boolean,
+getInternalContext (startTime?: 'number' | undefined)
+```
+
+#### NPM
+
+For NPM, use:
+
+```javascript
+import { datadogRum } from '@datadog/browser-rum'
+
+datadogRum.getInternalContext() // { session_id: "xxxx", application_id: "xxxx" ... }
+```
+
+#### CDN async
+
+For CDN async, use:
+
+```javascript
+DD_RUM.onReady(function () {
+  DD_RUM.getInternalContext() // { session_id: "xxxx", application_id: "xxxx" ... }
 })
 ```
 
-### Browser and Session Replay sampling configuration
+#### CDN sync
 
-The `sampleRate` option controls the overall sample rate of RUM data collection. The `replaySampleRate` option controls the percentage of Session Replay data collection of the overall rate (the collection of **Resources**, **Long Tasks**, and **Replay** recordings).
+For CDN sync, use:
 
-For example, to collect 100% of your sessions using only the Browser RUM option:
-
-```
-datadogRum.init({
-    ....
-    sampleRate: 100,
-    replaySampleRate: 0
-});
+```javascript
+window.DD_RUM && window.DD_RUM.getInternalContext() // { session_id: "xxxx", application_id: "xxxx" ... }
 ```
 
-For example, to collect 100% of your sessions using only the Session Replay RUM option without recording a replay:
-
-```
-datadogRum.init({
-    ....
-    sampleRate: 100,
-    replaySampleRate: 100 // Note: if this is not included it will default to 100%
-});
-```
-
-For example, to collect 25% of your sessions using the Browser RUM option and 25% of your sessions using the Session Replay RUM option:
-
-```
-datadogRum.init({
-    ....
-    sampleRate: 50,
-    replaySampleRate: 50
-});
-```
-
-In the example above, 50% of all sessions are collected. The Session Replay RUM option tracks half of these sessions while the Browser RUM option tracks the remaining half of these sessions.
-
-## Further Reading
+## Further reading
 
 {{< partial name="whats-next/whats-next.html" >}}
+
+<!-- Note: all URLs should be absolute -->
 
 [1]: https://app.datadoghq.com/rum/list
 [2]: https://docs.datadoghq.com/real_user_monitoring/data_collected/
@@ -299,11 +537,18 @@ In the example above, 50% of all sessions are collected. The Session Replay RUM 
 [4]: https://www.npmjs.com/package/@datadog/browser-rum
 [5]: https://docs.datadoghq.com/account_management/api-app-keys/#client-tokens
 [6]: https://docs.datadoghq.com/real_user_monitoring/browser/tracking_user_actions
-[7]: https://docs.datadoghq.com/real_user_monitoring/faq/proxy_rum_data/
+[7]: https://docs.datadoghq.com/real_user_monitoring/guide/proxy-rum-data/
 [8]: https://github.com/DataDog/browser-sdk/blob/main/packages/rum/BROWSER_SUPPORT.md
-[9]: https://docs.datadoghq.com/real_user_monitoring/browser/tracking_user_actions#declaring-a-name-for-click-actions
+[9]: https://docs.datadoghq.com/real_user_monitoring/browser/tracking_user_actions/#declare-a-name-for-click-actions
 [10]: https://docs.datadoghq.com/real_user_monitoring/browser/modifying_data_and_context/?tab=npm#override-default-rum-view-names
-[11]: https://www.datadoghq.com/pricing/?product=real-user-monitoring#real-user-monitoring
+[11]: https://www.datadoghq.com/pricing/?product=real-user-monitoring--session-replay#real-user-monitoring--session-replay
 [12]: https://docs.datadoghq.com/real_user_monitoring/connect_rum_and_traces?tab=browserrum
 [13]: https://docs.datadoghq.com/real_user_monitoring/session_replay/privacy_options?tab=maskuserinput
-[14]: https://docs.datadoghq.com/agent/basic_agent_usage#datadog-site
+[14]: https://docs.datadoghq.com/getting_started/site/
+[15]: https://docs.datadoghq.com/getting_started/tagging/#defining-tags
+[16]: https://docs.datadoghq.com/real_user_monitoring/browser/monitoring_page_performance/#how-page-activity-is-calculated
+[17]: https://docs.datadoghq.com/real_user_monitoring/session_replay/
+[18]: https://docs.datadoghq.com/real_user_monitoring/session_replay/privacy_options
+[19]: https://docs.datadoghq.com/getting_started/tagging/using_tags
+[20]: https://docs.datadoghq.com/real_user_monitoring/frustration_signals/
+[21]: https://docs.datadoghq.com/real_user_monitoring/guide/sampling-browser-plans/

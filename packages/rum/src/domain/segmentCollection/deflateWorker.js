@@ -1,4 +1,3 @@
-/* eslint-disable */
 let workerURL
 
 export function createDeflateWorker() {
@@ -11,10 +10,10 @@ export function createDeflateWorker() {
 
 function workerCodeFn() {
   monitor(function () {
-    const { Deflate, constants } = makePakoDeflate()
+    const { Deflate, constants, string2buf } = makePakoDeflate()
 
     let deflate = new Deflate()
-    let rawSize = 0
+    let rawBytesCount = 0
     self.addEventListener(
       'message',
       monitor((event) => {
@@ -25,36 +24,39 @@ function workerCodeFn() {
               type: 'initialized',
             })
             break
-          case 'write':
-            const additionalRawSize = pushData(data.data)
+          case 'write': {
+            const additionalBytesCount = pushData(data.data)
             self.postMessage({
               type: 'wrote',
               id: data.id,
-              compressedSize: deflate.chunks.reduce((total, chunk) => total + chunk.length, 0),
-              additionalRawSize,
+              compressedBytesCount: deflate.chunks.reduce((total, chunk) => total + chunk.length, 0),
+              additionalBytesCount,
             })
             break
-          case 'flush':
-            const additionalRawSize = data.data ? pushData(data.data) : 0
+          }
+          case 'flush': {
+            const additionalBytesCount = data.data ? pushData(data.data) : 0
             deflate.push('', constants.Z_FINISH)
             self.postMessage({
               type: 'flushed',
               id: data.id,
               result: deflate.result,
-              additionalRawSize,
-              rawSize,
+              additionalBytesCount,
+              rawBytesCount,
             })
             deflate = new Deflate()
-            rawSize = 0
+            rawBytesCount = 0
             break
+          }
         }
       })
     )
 
     function pushData(data) {
-      const binaryData = new TextEncoder().encode(data)
+      // TextEncoder is not supported on old browser version like Edge 18, therefore we use string2buf
+      const binaryData = string2buf(data)
       deflate.push(binaryData, constants.Z_SYNC_FLUSH)
-      rawSize += binaryData.length
+      rawBytesCount += binaryData.length
       return binaryData.length
     }
   })()
@@ -73,7 +75,7 @@ function workerCodeFn() {
           // DATA_CLONE_ERR, cf https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
           self.postMessage({
             type: 'errored',
-            error: '' + e,
+            error: `${e}`,
           })
         }
       }
@@ -82,6 +84,7 @@ function workerCodeFn() {
 
   // https://github.com/nodeca/pako/blob/034669ba0f1a4c0590e45f7c2820128200f972b3/dist/pako_deflate.es5.js
   function makePakoDeflate() {
+    /* eslint-disable camelcase, no-bitwise */
     // (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin
     //
     // This software is provided 'as-is', without any express or implied
@@ -99,8 +102,6 @@ function workerCodeFn() {
     // 2. Altered source versions must be plainly marked as such, and must not be
     //   misrepresented as being the original software.
     // 3. This notice may not be removed or altered from any source distribution.
-
-    /* eslint-disable space-unary-ops */
 
     /* Public constants ========================================================== */
 
@@ -183,8 +184,6 @@ function workerCodeFn() {
 
     var REPZ_11_138 = 18
     /* repeat a zero length 11-138 times  (7 bits of repeat count) */
-
-    /* eslint-disable comma-spacing,array-bracket-spacing */
 
     var extra_lbits =
       /* extra bits for each length code */
@@ -529,7 +528,10 @@ function workerCodeFn() {
     var gen_codes = function gen_codes(
       tree,
       max_code,
-      bl_count //    ct_data *tree;             /* the tree to decorate */ //    int max_code;              /* largest code with non zero frequency */ //    ushf *bl_count;            /* number of codes at each bit length */
+      bl_count
+      //    ct_data *tree;             /* the tree to decorate */
+      //    int max_code;              /* largest code with non zero frequency */
+      //    ushf *bl_count;            /* number of codes at each bit length */
     ) {
       var next_code = new Array(MAX_BITS + 1)
       /* next code value for each bit length */
@@ -705,7 +707,8 @@ function workerCodeFn() {
 
       static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS + 1, L_CODES, MAX_BITS)
       static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0, D_CODES, MAX_BITS)
-      static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0, BL_CODES, MAX_BL_BITS) // static_init_done = true;
+      static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0, BL_CODES, MAX_BL_BITS)
+      // static_init_done = true;
     }
     /* ===========================================================================
      * Initialize a new block.
@@ -765,7 +768,11 @@ function workerCodeFn() {
       s,
       buf,
       len,
-      header // DeflateState *s; //charf    *buf;    /* the input data */ //unsigned len;     /* its length */ //int      header;  /* true if block header must be written */
+      header
+      // DeflateState *s;
+      // charf    *buf;    /* the input data */
+      // unsigned len;     /* its length */
+      // int      header;  /* true if block header must be written */
     ) {
       bi_windup(s)
       /* align on byte boundary */
@@ -773,7 +780,8 @@ function workerCodeFn() {
       if (header) {
         put_short(s, len)
         put_short(s, ~len)
-      } //  while (len--) {
+      }
+      //  while (len--) {
       //    put_byte(s, *buf++);
       //  }
 
@@ -812,7 +820,10 @@ function workerCodeFn() {
     var pqdownheap = function pqdownheap(
       s,
       tree,
-      k //    deflate_state *s; //    ct_data *tree;  /* the tree to restore */ //    int k;               /* node to move down */
+      k
+      //    deflate_state *s;
+      //    ct_data *tree;  /* the tree to restore */
+      //    int k;               /* node to move down */
     ) {
       var v = s.heap[k]
       var j = k << 1
@@ -848,7 +859,10 @@ function workerCodeFn() {
     var compress_block = function compress_block(
       s,
       ltree,
-      dtree //    deflate_state *s; //    const ct_data *ltree; /* literal tree */ //    const ct_data *dtree; /* distance tree */
+      dtree
+      //    deflate_state *s;
+      //    const ct_data *ltree; /* literal tree */
+      //    const ct_data *dtree; /* distance tree */
     ) {
       var dist
       /* distance of matched string */
@@ -1074,7 +1088,10 @@ function workerCodeFn() {
     var scan_tree = function scan_tree(
       s,
       tree,
-      max_code //    deflate_state *s; //    ct_data *tree;   /* the tree to be scanned */ //    int max_code;    /* and its largest code of non zero frequency */
+      max_code
+      //    deflate_state *s;
+      //    ct_data *tree;   /* the tree to be scanned */
+      //    int max_code;    /* and its largest code of non zero frequency */
     ) {
       var n
       /* iterates over all tree elements */
@@ -1154,7 +1171,10 @@ function workerCodeFn() {
     var send_tree = function send_tree(
       s,
       tree,
-      max_code //    deflate_state *s; //    ct_data *tree; /* the tree to be scanned */ //    int max_code;       /* and its largest code of non zero frequency */
+      max_code
+      //    deflate_state *s;
+      //    ct_data *tree; /* the tree to be scanned */
+      //    int max_code;       /* and its largest code of non zero frequency */
     ) {
       var n
       /* iterates over all tree elements */
@@ -1407,7 +1427,11 @@ function workerCodeFn() {
       s,
       buf,
       stored_len,
-      last // DeflateState *s; //charf *buf;       /* input block */ //ulg stored_len;   /* length of input block */ //int last;         /* one if this is the last block for a file */
+      last
+      // DeflateState *s;
+      // charf *buf;       /* input block */
+      // ulg stored_len;   /* length of input block */
+      // int last;         /* one if this is the last block for a file */
     ) {
       send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3)
       /* send block type */
@@ -1434,7 +1458,11 @@ function workerCodeFn() {
       s,
       buf,
       stored_len,
-      last // DeflateState *s; //charf *buf;       /* input block, or NULL if too old */ //ulg stored_len;   /* length of input block */ //int last;         /* one if this is the last block for a file */
+      last
+      // DeflateState *s;
+      // charf *buf;       /* input block, or NULL if too old */
+      // ulg stored_len;   /* length of input block */
+      // int last;         /* one if this is the last block for a file */
     ) {
       var opt_lenb
       var static_lenb
@@ -1521,7 +1549,10 @@ function workerCodeFn() {
     var _tr_tally = function _tr_tally(
       s,
       dist,
-      lc //    deflate_state *s; //    unsigned dist;  /* distance of matched string */ //    unsigned lc;    /* match length-MIN_MATCH or unmatched char (if dist==0) */
+      lc
+      //    deflate_state *s;
+      //    unsigned dist;  /* distance of matched string */
+      //    unsigned lc;    /* match length-MIN_MATCH or unmatched char (if dist==0) */
     ) {
       // let out_length, in_length, dcode;
       s.pending_buf[s.d_buf + s.last_lit * 2] = (dist >>> 8) & 0xff
@@ -1913,7 +1944,6 @@ function workerCodeFn() {
         buf[len] = 0
       }
     }
-    /* eslint-disable new-cap */
 
     var HASH_ZLIB = function HASH_ZLIB(s, prev, data) {
       return ((prev << s.hash_shift) ^ data) & s.hash_mask
@@ -3378,10 +3408,12 @@ function workerCodeFn() {
       s.lit_bufsize = 1 << (memLevel + 6)
       /* 16K elements by default */
 
-      s.pending_buf_size = s.lit_bufsize * 4 // overlay = (ushf *) ZALLOC(strm, s->lit_bufsize, sizeof(ush)+2);
+      s.pending_buf_size = s.lit_bufsize * 4
+      // overlay = (ushf *) ZALLOC(strm, s->lit_bufsize, sizeof(ush)+2);
       // s->pending_buf = (uchf *) overlay;
 
-      s.pending_buf = new Uint8Array(s.pending_buf_size) // It is offset from `s.pending_buf` (size is `s.lit_bufsize * 2`)
+      // It is offset from `s.pending_buf` (size is `s.lit_bufsize * 2`)
+      s.pending_buf = new Uint8Array(s.pending_buf_size)
       // s->d_buf = overlay + s->lit_bufsize/sizeof(ush);
 
       s.d_buf = 1 * s.lit_bufsize // s->l_buf = s->pending_buf + (1+sizeof(ush))*s->lit_bufsize;
@@ -3929,56 +3961,8 @@ function workerCodeFn() {
       deflateInfo,
     }
 
-    function _typeof(obj) {
-      '@babel/helpers - typeof'
-
-      if (typeof Symbol === 'function' && typeof Symbol.iterator === 'symbol') {
-        _typeof = function (obj) {
-          return typeof obj
-        }
-      } else {
-        _typeof = function (obj) {
-          return obj && typeof Symbol === 'function' && obj.constructor === Symbol && obj !== Symbol.prototype
-            ? 'symbol'
-            : typeof obj
-        }
-      }
-
-      return _typeof(obj)
-    }
-
-    var _has = function _has(obj, key) {
-      return Object.prototype.hasOwnProperty.call(obj, key)
-    }
-
-    var assign = function assign(
-      obj
-      /* from1, from2, from3, ... */
-    ) {
-      var sources = Array.prototype.slice.call(arguments, 1)
-
-      while (sources.length) {
-        var source = sources.shift()
-
-        if (!source) {
-          continue
-        }
-
-        if (_typeof(source) !== 'object') {
-          throw new TypeError(`${source}must be non-object`)
-        }
-
-        for (var p in source) {
-          if (_has(source, p)) {
-            obj[p] = source[p]
-          }
-        }
-      }
-
-      return obj
-    } // Join array of chunks to single array.
-
-    var flattenChunks = function flattenChunks(chunks) {
+    // Join array of chunks to single array.
+    function flattenChunks(chunks) {
       // calculate data length
       var len = 0
 
@@ -3997,24 +3981,13 @@ function workerCodeFn() {
       return result
     }
 
-    var common = {
-      assign,
-      flattenChunks,
-    }
-
     // String encode/decode helpers
     //
     // - apply(Array) can fail on Android 2.2
     // - apply(Uint8Array) can fail on iOS 5.1 Safari
     //
 
-    var STR_APPLY_UIA_OK = true
-
-    try {
-      String.fromCharCode.apply(null, new Uint8Array(1))
-    } catch (__) {
-      STR_APPLY_UIA_OK = false
-    } // Table with utf8 lengths (calculated by first byte of sequence)
+    // Table with utf8 lengths (calculated by first byte of sequence)
     // Note, that 5 & 6-byte values and some 4-byte values can not be represented in JS,
     // because max possible codepoint is 0x10ffff
 
@@ -4157,17 +4130,17 @@ function workerCodeFn() {
      *
      * Additional options, for internal needs:
      *
-     * - `chunkSize` - size of generated data chunks (16K by default)
-     * - `raw` (Boolean) - do raw deflate
-     * - `gzip` (Boolean) - create gzip wrapper
-     * - `header` (Object) - custom header for gzip
-     *   - `text` (Boolean) - true if compressed data believed to be text
-     *   - `time` (Number) - modification time, unix timestamp
-     *   - `os` (Number) - operation system code
-     *   - `extra` (Array) - array of bytes with extra data (max 65536)
-     *   - `name` (String) - file name (binary string)
-     *   - `comment` (String) - comment (binary string)
-     *   - `hcrc` (Boolean) - true if header crc should be added
+     * * `chunkSize` - size of generated data chunks (16K by default)
+     * * `raw` (Boolean) - do raw deflate
+     * * `gzip` (Boolean) - create gzip wrapper
+     * * `header` (Object) - custom header for gzip
+     * ** `text` (Boolean) - true if compressed data believed to be text
+     * ** `time` (Number) - modification time, unix timestamp
+     * ** `os` (Number) - operation system code
+     * ** `extra` (Array) - array of bytes with extra data (max 65536)
+     * ** `name` (String) - file name (binary string)
+     * ** `comment` (String) - comment (binary string)
+     * ** `hcrc` (Boolean) - true if header crc should be added
      *
      * ##### Example:
      *
@@ -4187,18 +4160,15 @@ function workerCodeFn() {
      * ```
      * */
 
-    function Deflate(options) {
-      this.options = common.assign(
-        {
-          level: Z_DEFAULT_COMPRESSION$1,
-          method: Z_DEFLATED$1,
-          chunkSize: 16384,
-          windowBits: 15,
-          memLevel: 8,
-          strategy: Z_DEFAULT_STRATEGY$1,
-        },
-        options || {}
-      )
+    function Deflate() {
+      this.options = {
+        level: Z_DEFAULT_COMPRESSION$1,
+        method: Z_DEFLATED$1,
+        chunkSize: 16384,
+        windowBits: 15,
+        memLevel: 8,
+        strategy: Z_DEFAULT_STRATEGY$1,
+      }
       var opt = this.options
 
       if (opt.raw && opt.windowBits > 0) {
@@ -4248,9 +4218,9 @@ function workerCodeFn() {
     /**
      * Deflate#push(data[, flush_mode]) -> Boolean
      * - data (Uint8Array|ArrayBuffer|String): input data. Strings will be
-     *   converted to utf8 byte sequence.
+     * converted to utf8 byte sequence.
      * - flush_mode (Number|Boolean): 0..6 for corresponding Z_NO_FLUSH..Z_TREE modes.
-     *   See constants. Skipped or `false` means Z_NO_FLUSH, `true` means Z_FINISH.
+     * See constants. Skipped or `false` means Z_NO_FLUSH, `true` means Z_FINISH.
      *
      * Sends input data to deflate pipe, generating [[Deflate#onData]] calls with
      * new compressed chunks. Returns `true` on success. The last data block must
@@ -4352,7 +4322,7 @@ function workerCodeFn() {
     /**
      * Deflate#onEnd(status) -> Void
      * - status (Number): deflate status. 0 (Z_OK) on success,
-     *   other if not.
+     * other if not.
      *
      * Called once after you tell deflate that the input stream is
      * complete (Z_FINISH). By default - join collected chunks,
@@ -4362,86 +4332,78 @@ function workerCodeFn() {
     Deflate.prototype.onEnd = function (status) {
       // On success - join
       if (status === Z_OK$1) {
-        this.result = common.flattenChunks(this.chunks)
+        this.result = flattenChunks(this.chunks)
       }
 
       this.chunks = []
       this.err = status
       this.msg = this.strm.msg
     }
-    /**
-     * deflate(data[, options]) -> Uint8Array
-     * - data (Uint8Array|String): input data to compress.
-     * - options (Object): zlib deflate options.
-     *
-     * Compress `data` with deflate algorithm and `options`.
-     *
-     * Supported options are:
-     *
-     * - level
-     * - windowBits
-     * - memLevel
-     * - strategy
-     * - dictionary
-     *
-     * [http://zlib.net/manual.html#Advanced](http://zlib.net/manual.html#Advanced)
-     * for more information on these.
-     *
-     * Sugar (options):
-     *
-     * - `raw` (Boolean) - say that we work with raw stream, if you don't wish to specify
-     *   negative windowBits implicitly.
-     *
-     * ##### Example:
-     *
-     * ```javascript
-     * const pako = require('pako')
-     * const data = new Uint8Array([1,2,3,4,5,6,7,8,9]);
-     *
-     * console.log(pako.deflate(data));
-     * ```
-     * */
 
-    function deflate$1(input, options) {
-      var deflator = new Deflate(options)
-      deflator.push(input, true) // That will never happens, if you don't cheat with options :)
-
-      if (deflator.err) {
-        throw deflator.msg || messages[deflator.err]
+    // https://github.com/nodeca/pako/blob/26dff4fb3472c5532b3bd8856421146d35ab7592/lib/utils/strings.js#L26
+    function string2buf(str) {
+      if (typeof TextEncoder === 'function' && TextEncoder.prototype.encode) {
+        return new TextEncoder().encode(str)
       }
 
-      return deflator.result
-    }
-    /**
-     * deflateRaw(data[, options]) -> Uint8Array
-     * - data (Uint8Array|String): input data to compress.
-     * - options (Object): zlib deflate options.
-     *
-     * The same as [[deflate]], but creates raw data, without wrapper
-     * (header and adler32 crc).
-     * */
+      let buf
+      let c
+      let c2
+      let m_pos
+      let i
+      let str_len = str.length
+      let buf_len = 0
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    function deflateRaw(input, options) {
-      options = options || {}
-      options.raw = true
-      return deflate$1(input, options)
-    }
-    /**
-     * gzip(data[, options]) -> Uint8Array
-     * - data (Uint8Array|String): input data to compress.
-     * - options (Object): zlib deflate options.
-     *
-     * The same as [[deflate]], but create gzip wrapper instead of
-     * deflate one.
-     * */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    function gzip(input, options) {
-      options = options || {}
-      options.gzip = true
-      return deflate$1(input, options)
+      // count binary size
+      for (m_pos = 0; m_pos < str_len; m_pos++) {
+        c = str.charCodeAt(m_pos)
+        if ((c & 0xfc00) === 0xd800 && m_pos + 1 < str_len) {
+          c2 = str.charCodeAt(m_pos + 1)
+          if ((c2 & 0xfc00) === 0xdc00) {
+            c = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00)
+            m_pos++
+          }
+        }
+        buf_len += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4
+      }
+
+      // allocate buffer
+      buf = new Uint8Array(buf_len)
+
+      // convert
+      for (i = 0, m_pos = 0; i < buf_len; m_pos++) {
+        c = str.charCodeAt(m_pos)
+        if ((c & 0xfc00) === 0xd800 && m_pos + 1 < str_len) {
+          c2 = str.charCodeAt(m_pos + 1)
+          if ((c2 & 0xfc00) === 0xdc00) {
+            c = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00)
+            m_pos++
+          }
+        }
+        if (c < 0x80) {
+          /* one byte */
+          buf[i++] = c
+        } else if (c < 0x800) {
+          /* two bytes */
+          buf[i++] = 0xc0 | (c >>> 6)
+          buf[i++] = 0x80 | (c & 0x3f)
+        } else if (c < 0x10000) {
+          /* three bytes */
+          buf[i++] = 0xe0 | (c >>> 12)
+          buf[i++] = 0x80 | ((c >>> 6) & 0x3f)
+          buf[i++] = 0x80 | (c & 0x3f)
+        } else {
+          /* four bytes */
+          buf[i++] = 0xf0 | (c >>> 18)
+          buf[i++] = 0x80 | ((c >>> 12) & 0x3f)
+          buf[i++] = 0x80 | ((c >>> 6) & 0x3f)
+          buf[i++] = 0x80 | (c & 0x3f)
+        }
+      }
+
+      return buf
     }
 
-    return { Deflate, constants }
+    return { Deflate, constants, string2buf }
   }
 }

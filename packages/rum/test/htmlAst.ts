@@ -1,5 +1,7 @@
-import { objectValues } from '../../core/src'
-import { SerializedNodeWithId, serializeNodeWithId } from '../src/domain/record'
+import type { RumConfiguration } from '@datadog/browser-rum-core'
+import { noop, objectValues } from '../../core/src'
+import type { SerializedNodeWithId } from '../src/types'
+import { serializeNodeWithId, SerializationContextStatus, createElementsScrollPositions } from '../src/domain/record'
 import { NodePrivacyLevel, PRIVACY_ATTR_NAME } from '../src/constants'
 
 export const makeHtmlDoc = (htmlContent: string, privacyTag: string) => {
@@ -9,7 +11,6 @@ export const makeHtmlDoc = (htmlContent: string, privacyTag: string) => {
     newDoc.documentElement.setAttribute(PRIVACY_ATTR_NAME, privacyTag)
     return newDoc
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('Failed to set innerHTML of new doc:', e)
     return document
   }
@@ -25,14 +26,26 @@ export const removeIdFieldsRecursivelyClone = (thing: Record<string, unknown>): 
   return thing
 }
 
+const DEFAULT_SHADOW_ROOT_CONTROLLER = {
+  flush: noop,
+  stop: noop,
+  addShadowRoot: noop,
+  removeShadowRoot: noop,
+}
+
 export const generateLeanSerializedDoc = (htmlContent: string, privacyTag: string) => {
   const newDoc = makeHtmlDoc(htmlContent, privacyTag)
   const serializedDoc = removeIdFieldsRecursivelyClone(
     serializeNodeWithId(newDoc, {
-      document: newDoc,
       parentNodePrivacyLevel: NodePrivacyLevel.ALLOW,
-    })!
-  ) as SerializedNodeWithId
+      serializationContext: {
+        shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+        status: SerializationContextStatus.INITIAL_FULL_SNAPSHOT,
+        elementsScrollPositions: createElementsScrollPositions(),
+      },
+      configuration: {} as RumConfiguration,
+    })! as unknown as Record<string, unknown>
+  ) as unknown as SerializedNodeWithId
   return serializedDoc
 }
 

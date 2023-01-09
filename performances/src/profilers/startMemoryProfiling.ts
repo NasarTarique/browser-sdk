@@ -1,6 +1,6 @@
-import { CDPSession } from 'puppeteer'
-import { ProfilingOptions } from '../types'
-import { isSdkBundleUrl } from './startProfiling'
+import type { CDPSession } from 'puppeteer'
+import { isSdkBundleUrl } from '../utils'
+import type { ProfilingOptions } from '../types'
 
 export async function startMemoryProfiling(options: ProfilingOptions, client: CDPSession) {
   await client.send('HeapProfiler.enable')

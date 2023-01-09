@@ -1,11 +1,15 @@
+import type { ServerResponse } from 'http'
 import * as url from 'url'
 import cors from 'cors'
 import express from 'express'
-import { buildLogs, buildNpm, buildRum, buildRumSlim } from '../sdkBuilds'
-import { Servers } from '../httpServers'
+import * as sdkBuilds from '../sdkBuilds'
+import type { MockServerApp, Servers } from '../httpServers'
 
-export function createMockServerApp(servers: Servers, setup: string) {
+export const LARGE_RESPONSE_MIN_BYTE_SIZE = 100_000
+
+export function createMockServerApp(servers: Servers, setup: string): MockServerApp {
   const app = express()
+  let largeResponseBytesWritten = 0
 
   app.use(cors())
   app.disable('etag') // disable automatic resource caching
@@ -21,6 +25,45 @@ export function createMockServerApp(servers: Servers, setup: string) {
   app.get('/throw', (_req, res) => {
     res.status(500).send('Server error')
   })
+
+  app.get('/throw-large-response', (_req, res) => {
+    res.status(500)
+
+    const chunkText = 'Server error\n'.repeat(50)
+    generateLargeResponse(res, chunkText)
+  })
+
+  app.get('/large-response', (_req, res) => {
+    const chunkText = 'foofoobarbar\n'.repeat(50)
+    generateLargeResponse(res, chunkText)
+  })
+
+  function generateLargeResponse(res: ServerResponse, chunkText: string) {
+    let bytesWritten = 0
+    let timeoutId: NodeJS.Timeout
+
+    res.on('close', () => {
+      largeResponseBytesWritten = bytesWritten
+      clearTimeout(timeoutId)
+    })
+
+    function writeMore() {
+      res.write(chunkText, (error) => {
+        if (error) {
+          console.log('Write error', error)
+        } else {
+          bytesWritten += chunkText.length
+          if (bytesWritten < LARGE_RESPONSE_MIN_BYTE_SIZE) {
+            timeoutId = setTimeout(writeMore, 10)
+          } else {
+            res.end()
+          }
+        }
+      })
+    }
+
+    writeMore()
+  }
 
   app.get('/unknown', (_req, res) => {
     res.status(404).send('Not found')
@@ -60,21 +103,25 @@ export function createMockServerApp(servers: Servers, setup: string) {
     res.end()
   })
 
-  app.get('/datadog-logs.js', async (_req, res) => {
-    res.header('content-type', 'application/javascript').send(await buildLogs(servers.intake.url))
+  app.get('/datadog-logs.js', (_req, res) => {
+    res.sendFile(sdkBuilds.LOGS_BUNDLE)
   })
 
-  app.get('/datadog-rum.js', async (_req, res) => {
-    res.header('content-type', 'application/javascript').send(await buildRum(servers.intake.url))
+  app.get('/datadog-rum.js', (_req, res) => {
+    res.sendFile(sdkBuilds.RUM_BUNDLE)
   })
 
-  app.get('/datadog-rum-slim.js', async (_req, res) => {
-    res.header('content-type', 'application/javascript').send(await buildRumSlim(servers.intake.url))
+  app.get('/datadog-rum-slim.js', (_req, res) => {
+    res.sendFile(sdkBuilds.RUM_SLIM_BUNDLE)
   })
 
-  app.get('/app.js', async (_req, res) => {
-    res.header('content-type', 'application/javascript').send(await buildNpm(servers.intake.url))
+  app.get('/app.js', (_req, res) => {
+    res.sendFile(sdkBuilds.NPM_BUNDLE)
   })
 
-  return app
+  return Object.assign(app, {
+    getLargeResponseWroteSize() {
+      return largeResponseBytesWritten
+    },
+  })
 }

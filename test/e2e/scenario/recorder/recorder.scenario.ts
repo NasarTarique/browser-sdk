@@ -1,6 +1,14 @@
-import { CreationReason, IncrementalSource, RecordType, Segment } from '@datadog/browser-rum/cjs/types'
-import { InputData, StyleSheetRuleData, NodeType } from '@datadog/browser-rum/cjs/domain/record/types'
-import { RumInitConfiguration } from '@datadog/browser-rum-core'
+import type {
+  InputData,
+  StyleSheetRuleData,
+  CreationReason,
+  BrowserSegment,
+  ScrollData,
+} from '@datadog/browser-rum/src/types'
+import { NodeType, IncrementalSource, RecordType, MouseInteractionType } from '@datadog/browser-rum/src/types'
+
+import type { RumInitConfiguration } from '@datadog/browser-rum-core'
+import { FrustrationType } from '@datadog/browser-rum-core'
 import { DefaultPrivacyLevel } from '@datadog/browser-rum'
 
 import {
@@ -12,11 +20,14 @@ import {
   findMeta,
   findTextContent,
   createMutationPayloadValidatorFromSegment,
+  findAllFrustrationRecords,
+  findMouseInteractionRecords,
+  findElementWithTagName,
 } from '@datadog/browser-rum/test/utils'
 import { renewSession } from '../../lib/helpers/session'
-import { createTest, bundleSetup, html, EventRegistry } from '../../lib/framework'
-import { browserExecute } from '../../lib/helpers/browser'
-import { flushEvents } from '../../lib/helpers/flushEvents'
+import type { EventRegistry } from '../../lib/framework'
+import { flushEvents, createTest, bundleSetup, html } from '../../lib/framework'
+import { browserExecute, browserExecuteAsync } from '../../lib/helpers/browser'
 
 const INTEGER_RE = /^\d+$/
 const TIMESTAMP_RE = /^\d{13}$/
@@ -33,8 +44,8 @@ describe('recorder', () => {
       await flushEvents()
 
       expect(serverEvents.sessionReplay.length).toBe(1)
-      const { segment, meta } = serverEvents.sessionReplay[0]
-      expect(meta).toEqual({
+      const { segment, metadata } = serverEvents.sessionReplay[0]
+      expect(metadata).toEqual({
         'application.id': jasmine.stringMatching(UUID_RE),
         creation_reason: 'init',
         end: jasmine.stringMatching(TIMESTAMP_RE),
@@ -44,21 +55,25 @@ describe('recorder', () => {
         start: jasmine.stringMatching(TIMESTAMP_RE),
         'view.id': jasmine.stringMatching(UUID_RE),
         raw_segment_size: jasmine.stringMatching(INTEGER_RE),
+        index_in_view: '0',
+        source: 'browser',
       })
       expect(segment).toEqual({
         data: {
-          application: { id: meta['application.id'] },
-          creation_reason: meta.creation_reason as CreationReason,
-          end: Number(meta.end),
+          application: { id: metadata['application.id'] },
+          creation_reason: metadata.creation_reason as CreationReason,
+          end: Number(metadata.end),
           has_full_snapshot: true,
           records: jasmine.any(Array),
-          records_count: Number(meta.records_count),
-          session: { id: meta['session.id'] },
-          start: Number(meta.start),
-          view: { id: meta['view.id'] },
+          records_count: Number(metadata.records_count),
+          session: { id: metadata['session.id'] },
+          start: Number(metadata.start),
+          view: { id: metadata['view.id'] },
+          index_in_view: 0,
+          source: 'browser',
         },
         encoding: jasmine.any(String),
-        filename: `${meta['session.id']}-${meta.start}`,
+        filename: `${metadata['session.id']}-${metadata.start}`,
         mimetype: 'application/octet-stream',
       })
       expect(findMeta(segment.data)).toBeTruthy('have a Meta record')
@@ -518,7 +533,7 @@ describe('recorder', () => {
         expect(selectRecords.length).toBe(1)
         expect((selectRecords[0].data as { text?: string }).text).toBe('2')
 
-        function filterRecordsByIdAttribute(segment: Segment, idAttribute: string) {
+        function filterRecordsByIdAttribute(segment: BrowserSegment, idAttribute: string) {
           const fullSnapshot = findFullSnapshot(segment)!
           const id = findElementWithIdAttribute(fullSnapshot.data.node, idAttribute)!.id
           const records = findAllIncrementalSnapshots(segment, IncrementalSource.Input) as Array<{ data: InputData }>
@@ -633,6 +648,52 @@ describe('recorder', () => {
         expect(styleSheetRules[0].data.removes).toEqual([{ index: 0 }])
         expect(styleSheetRules[1].data.adds).toEqual([{ rule: '.added {}', index: 0 }])
       })
+
+    createTest('record nested css rules changes')
+      .withRum()
+      .withRumInit(initRumAndStartRecording)
+      .withSetup(bundleSetup)
+      .withBody(
+        html`
+          <style>
+            @supports (display: grid) {
+              .foo {
+              }
+            }
+            @media condition {
+              .bar {
+              }
+              .baz {
+              }
+            }
+          </style>
+        `
+      )
+      .run(async ({ serverEvents }) => {
+        await browserExecute(() => {
+          const supportsRule = document.styleSheets[0].cssRules[0] as CSSGroupingRule
+          const mediaRule = document.styleSheets[0].cssRules[1] as CSSGroupingRule
+
+          supportsRule.insertRule('.inserted {}', 0)
+          supportsRule.insertRule('.added {}', 1)
+          mediaRule.deleteRule(1)
+        })
+
+        await flushEvents()
+
+        expect(serverEvents.sessionReplay.length).toBe(1)
+
+        const segment = getFirstSegment(serverEvents)
+
+        const styleSheetRules = findAllIncrementalSnapshots(segment, IncrementalSource.StyleSheetRule) as Array<{
+          data: StyleSheetRuleData
+        }>
+
+        expect(styleSheetRules.length).toBe(3)
+        expect(styleSheetRules[0].data.adds).toEqual([{ rule: '.inserted {}', index: [0, 0] }])
+        expect(styleSheetRules[1].data.adds).toEqual([{ rule: '.added {}', index: [0, 1] }])
+        expect(styleSheetRules[2].data.removes).toEqual([{ index: [1, 1] }])
+      })
   })
 
   describe('session renewal', () => {
@@ -653,6 +714,158 @@ describe('recorder', () => {
         expect(segment.records[1].type).toBe(RecordType.Focus)
         expect(segment.records[2].type).toBe(RecordType.FullSnapshot)
         expect(segment.records.slice(3).every((record) => record.type !== RecordType.FullSnapshot)).toBe(true)
+      })
+  })
+
+  describe('frustration records', () => {
+    createTest('should detect a dead click and match it to mouse interaction record')
+      .withRum({ trackFrustrations: true })
+      .withRumInit(initRumAndStartRecording)
+      .withSetup(bundleSetup)
+      .run(async ({ serverEvents }) => {
+        const html = await $('html')
+        await html.click()
+        await flushEvents()
+
+        expect(serverEvents.sessionReplay.length).toBe(1)
+        const { segment } = serverEvents.sessionReplay[0]
+
+        const clickRecords = findMouseInteractionRecords(segment.data, MouseInteractionType.Click)
+        const frustrationRecords = findAllFrustrationRecords(segment.data)
+
+        expect(clickRecords.length).toBe(1)
+        expect(clickRecords[0].id).toBeTruthy('mouse interaction record should have an id')
+        expect(frustrationRecords.length).toBe(1)
+        expect(frustrationRecords[0].data).toEqual({
+          frustrationTypes: [FrustrationType.DEAD_CLICK],
+          recordIds: [clickRecords[0].id!],
+        })
+      })
+
+    createTest('should detect a rage click and match it to mouse interaction records')
+      .withRum({ trackFrustrations: true })
+      .withRumInit(initRumAndStartRecording)
+      .withSetup(bundleSetup)
+      .withBody(
+        html`
+          <div id="main-div" />
+          <button
+            id="my-button"
+            onclick="document.querySelector('#main-div').appendChild(document.createElement('div'));"
+          />
+        `
+      )
+      .run(async ({ serverEvents }) => {
+        const button = await $('#my-button')
+        await Promise.all([button.click(), button.click(), button.click(), button.click()])
+        await flushEvents()
+
+        expect(serverEvents.sessionReplay.length).toBe(1)
+        const { segment } = serverEvents.sessionReplay[0]
+
+        const clickRecords = findMouseInteractionRecords(segment.data, MouseInteractionType.Click)
+        const frustrationRecords = findAllFrustrationRecords(segment.data)
+
+        expect(clickRecords.length).toBe(4)
+        expect(frustrationRecords.length).toBe(1)
+        expect(frustrationRecords[0].data).toEqual({
+          frustrationTypes: [FrustrationType.RAGE_CLICK],
+          recordIds: clickRecords.map((r) => r.id!),
+        })
+      })
+  })
+
+  describe('scroll positions', () => {
+    createTest('should be recorded across navigation')
+      .withRum()
+      .withSetup(bundleSetup)
+      .withBody(
+        html`
+          <style>
+            #container {
+              width: 100px;
+              height: 100px;
+              overflow-x: scroll;
+            }
+            #content {
+              width: 250px;
+            }
+            #big-element {
+              height: 4000px;
+            }
+          </style>
+          <div id="container">
+            <div id="content">I'm bigger than the container</div>
+          </div>
+          <div id="big-element"></div>
+        `
+      )
+      .run(async ({ serverEvents }) => {
+        async function scroll({ windowY, containerX }: { windowY: number; containerX: number }) {
+          return browserExecuteAsync(
+            (windowY, containerX, done) => {
+              let scrollCount = 0
+
+              document.addEventListener(
+                'scroll',
+                () => {
+                  scrollCount++
+                  if (scrollCount === 2) {
+                    // ensure to bypass observer throttling
+                    setTimeout(done, 100)
+                  }
+                },
+                { capture: true, passive: true }
+              )
+
+              window.scrollTo(0, windowY)
+              document.getElementById('container')!.scrollTo(containerX, 0)
+            },
+            windowY,
+            containerX
+          )
+        }
+
+        // initial scroll positions
+        await scroll({ windowY: 100, containerX: 10 })
+
+        await browserExecute(() => {
+          window.DD_RUM!.startSessionReplayRecording()
+        })
+
+        // wait for recorder to be properly started
+        await browser.pause(200)
+
+        // update scroll positions
+        await scroll({ windowY: 150, containerX: 20 })
+
+        // trigger new full snapshot
+        await browserExecute(() => {
+          window.DD_RUM!.startView()
+        })
+
+        await flushEvents()
+
+        expect(serverEvents.sessionReplay.length).toBe(2)
+        const firstSegment = getFirstSegment(serverEvents)
+
+        const firstFullSnapshot = findFullSnapshot(firstSegment)!
+        let htmlElement = findElementWithTagName(firstFullSnapshot.data.node, 'html')!
+        expect(htmlElement.attributes.rr_scrollTop).toBe(100)
+        let containerElement = findElementWithIdAttribute(firstFullSnapshot.data.node, 'container')!
+        expect(containerElement.attributes.rr_scrollLeft).toBe(10)
+
+        const scrollRecords = findAllIncrementalSnapshots(firstSegment, IncrementalSource.Scroll)
+        expect(scrollRecords.length).toBe(2)
+        const [windowScrollData, containerScrollData] = scrollRecords.map((record) => record.data as ScrollData)
+        expect(windowScrollData.y).toEqual(150)
+        expect(containerScrollData.x).toEqual(20)
+
+        const secondFullSnapshot = findFullSnapshot(getLastSegment(serverEvents))!
+        htmlElement = findElementWithTagName(secondFullSnapshot.data.node, 'html')!
+        expect(htmlElement.attributes.rr_scrollTop).toBe(150)
+        containerElement = findElementWithIdAttribute(secondFullSnapshot.data.node, 'container')!
+        expect(containerElement.attributes.rr_scrollLeft).toBe(20)
       })
   })
 })

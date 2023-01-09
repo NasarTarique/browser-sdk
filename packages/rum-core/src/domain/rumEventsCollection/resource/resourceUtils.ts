@@ -1,25 +1,25 @@
+import type { RelativeTime, ServerDuration } from '@datadog/browser-core'
 import {
-  addMonitoringMessage,
+  assign,
+  addTelemetryDebug,
   elapsed,
   getPathName,
   includes,
   isValidUrl,
-  RelativeTime,
   ResourceType,
-  ServerDuration,
   toServerDuration,
 } from '@datadog/browser-core'
-import { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
 
-import { PerformanceResourceDetailsElement } from '../../../rawRumEvent.types'
-import { RumConfiguration } from '../../configuration'
+import type { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
+
+import type { PerformanceResourceDetailsElement } from '../../../rawRumEvent.types'
+import type { RumConfiguration } from '../../configuration'
 
 export interface PerformanceResourceDetails {
   redirect?: PerformanceResourceDetailsElement
   dns?: PerformanceResourceDetailsElement
   connect?: PerformanceResourceDetailsElement
   ssl?: PerformanceResourceDetailsElement
-  // eslint-disable-next-line camelcase
   first_byte: PerformanceResourceDetailsElement
   download: PerformanceResourceDetailsElement
 }
@@ -49,7 +49,7 @@ const RESOURCE_TYPES: Array<[ResourceType, (initiatorType: string, path: string)
 export function computeResourceKind(timing: RumPerformanceResourceTiming) {
   const url = timing.name
   if (!isValidUrl(url)) {
-    addMonitoringMessage(`Failed to construct URL for "${timing.name}"`)
+    addTelemetryDebug(`Failed to construct URL for "${timing.name}"`)
     return ResourceType.OTHER
   }
   const path = getPathName(url)
@@ -175,11 +175,10 @@ export function toValidEntry(entry: RumPerformanceResourceTiming) {
     return undefined
   }
 
-  return {
-    ...entry,
+  return assign({}, entry, {
     redirectEnd,
     redirectStart,
-  }
+  })
 }
 
 function hasRedirection(entry: RumPerformanceResourceTiming) {

@@ -154,7 +154,6 @@ function isAllowedImport(basePath, source) {
   return packagesWithoutSideEffect.has(source)
 }
 
-/* eslint-disable max-len */
 /**
  * Authorize some call expressions. Feel free to add more exceptions here. Good candidates would
  * be functions that are known to be ECMAScript functions without side effects, that are likely to
@@ -166,17 +165,20 @@ function isAllowedImport(basePath, source) {
  * Webpack is not as smart as Rollup, and it usually treat all call expressions as impure, but it
  * could be fine to allow it nonetheless at it pulls very little code.
  */
-/* eslint-enable max-len */
 function isAllowedCallExpression({ callee }) {
   // Allow "Object.keys()"
   if (callee.type === 'MemberExpression' && callee.object.name === 'Object' && callee.property.name === 'keys') {
     return true
   }
 
+  // Allow ".concat()"
+  if (callee.type === 'MemberExpression' && callee.property.name === 'concat') {
+    return true
+  }
+
   return false
 }
 
-/* eslint-disable max-len */
 /**
  * Authorize some 'new' expressions. Feel free to add more exceptions here. Good candidates would
  * be functions that are known to be ECMAScript functions without side effects, that are likely to
@@ -188,12 +190,17 @@ function isAllowedCallExpression({ callee }) {
  * Webpack is not as smart as Rollup, and it usually treat all 'new' expressions as impure, but it
  * could be fine to allow it nonetheless at it pulls very little code.
  */
-/* eslint-enable max-len */
 function isAllowedNewExpression({ callee }) {
-  // Allow "new WeakMap()"
-  if (callee.name === 'WeakMap') {
-    return true
-  }
+  switch (callee.name) {
+    // Allow some native constructors
+    case 'RegExp':
+    case 'WeakMap':
+    case 'WeakSet':
+    case 'Set':
+    case 'Map':
+      return true
 
-  return false
+    default:
+      return false
+  }
 }

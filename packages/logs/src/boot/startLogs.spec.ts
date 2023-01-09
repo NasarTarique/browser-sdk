@@ -1,51 +1,23 @@
+import { ErrorSource, display, stopSessionManager, getCookie, SESSION_COOKIE_NAME } from '@datadog/browser-core'
+import { cleanupSyntheticsWorkerValues, mockSyntheticsWorkerValues } from '../../../core/test/syntheticsWorkerValues'
 import {
-  Context,
-  ErrorSource,
-  noop,
-  Observable,
-  ONE_MINUTE,
-  RawError,
-  RelativeTime,
-  resetExperimentalFeatures,
-  TimeStamp,
-  updateExperimentalFeatures,
-  getTimeStamp,
-} from '@datadog/browser-core'
-import sinon from 'sinon'
-import {
-  Clock,
   deleteEventBridgeStub,
   initEventBridgeStub,
-  mockClock,
   stubEndpointBuilder,
+  interceptRequests,
 } from '../../../core/test/specHelper'
-import { LogsConfiguration, validateAndBuildLogsConfiguration } from '../domain/configuration'
+import type { Request } from '../../../core/test/specHelper'
+import type { LogsConfiguration } from '../domain/configuration'
+import { validateAndBuildLogsConfiguration } from '../domain/configuration'
 
-import { Logger, LogsMessage, StatusType } from '../domain/logger'
-import { LogsSessionManager } from '../domain/logsSessionManager'
-import { LogsEvent } from '../logsEvent.types'
-import { buildAssemble, doStartLogs, startLogs as originalStartLogs } from './startLogs'
+import { HandlerType, Logger, StatusType } from '../domain/logger'
+import type { startLoggerCollection } from '../domain/logsCollection/logger/loggerCollection'
+import type { LogsEvent } from '../logsEvent.types'
+import { startLogs } from './startLogs'
 
-interface SentMessage extends LogsMessage {
-  logger?: { name: string }
-  view: {
-    id?: string
-    referrer?: string
-    url: string
-  }
+function getLoggedMessage(requests: Request[], index: number) {
+  return JSON.parse(requests[index].body) as LogsEvent
 }
-
-function getLoggedMessage(server: sinon.SinonFakeServer, index: number) {
-  return JSON.parse(server.requests[index].requestBody) as SentMessage
-}
-const FAKE_DATE = 123456
-const SESSION_ID = 'session-id'
-const baseConfiguration: LogsConfiguration = {
-  ...validateAndBuildLogsConfiguration({ clientToken: 'xxx', service: 'service' })!,
-  logsEndpointBuilder: stubEndpointBuilder('https://localhost/v1/input/log'),
-  maxBatchSize: 1,
-}
-const internalMonitoring = { setExternalContextProvider: () => undefined }
 
 interface Rum {
   getInternalContext(startTime?: number): any | undefined
@@ -53,385 +25,158 @@ interface Rum {
 declare global {
   interface Window {
     DD_RUM?: Rum
+    DD_RUM_SYNTHETICS?: Rum
   }
 }
 
 const DEFAULT_MESSAGE = { status: StatusType.info, message: 'message' }
+const COMMON_CONTEXT = {
+  view: { referrer: 'common_referrer', url: 'common_url' },
+  context: {},
+  user: {},
+}
 
 describe('logs', () => {
-  let sessionIsTracked: boolean
-  let server: sinon.SinonFakeServer
-  let errorObservable: Observable<RawError>
-  const sessionManager: LogsSessionManager = {
-    findTrackedSession: () => (sessionIsTracked ? { id: SESSION_ID } : undefined),
-  }
-  const startLogs = ({
-    errorLogger = new Logger(noop),
-    configuration: configurationOverrides,
-  }: { errorLogger?: Logger; configuration?: Partial<LogsConfiguration> } = {}) => {
-    const configuration = { ...baseConfiguration, ...configurationOverrides }
-    return doStartLogs(configuration, errorObservable, internalMonitoring, sessionManager, errorLogger)
-  }
+  const initConfiguration = { clientToken: 'xxx', service: 'service', telemetrySampleRate: 0 }
+  let baseConfiguration: LogsConfiguration
+  let interceptor: ReturnType<typeof interceptRequests>
+  let requests: Request[]
+  let handleLog: ReturnType<typeof startLoggerCollection>['handleLog']
+  let logger: Logger
+  let consoleLogSpy: jasmine.Spy
+  let displayLogSpy: jasmine.Spy
 
   beforeEach(() => {
-    sessionIsTracked = true
-    errorObservable = new Observable<RawError>()
-    server = sinon.fakeServer.create()
+    baseConfiguration = {
+      ...validateAndBuildLogsConfiguration(initConfiguration)!,
+      logsEndpointBuilder: stubEndpointBuilder('https://localhost/v1/input/log'),
+      batchMessagesLimit: 1,
+    }
+    logger = new Logger((...params) => handleLog(...params))
+    interceptor = interceptRequests()
+    requests = interceptor.requests
+    consoleLogSpy = spyOn(console, 'log')
+    displayLogSpy = spyOn(display, 'log')
   })
 
   afterEach(() => {
-    server.restore()
     delete window.DD_RUM
-    resetExperimentalFeatures()
     deleteEventBridgeStub()
+    stopSessionManager()
+    interceptor.restore()
   })
 
   describe('request', () => {
     it('should send the needed data', () => {
-      const sendLog = startLogs()
-      sendLog(
-        { message: 'message', foo: 'bar', status: StatusType.warn },
-        {
-          date: FAKE_DATE,
-          view: { referrer: document.referrer, url: window.location.href },
-        }
-      )
+      ;({ handleLog: handleLog } = startLogs(initConfiguration, baseConfiguration, () => COMMON_CONTEXT, logger))
 
-      expect(server.requests.length).toEqual(1)
-      expect(server.requests[0].url).toContain(baseConfiguration.logsEndpointBuilder.build())
-      expect(getLoggedMessage(server, 0)).toEqual({
-        date: FAKE_DATE as TimeStamp,
+      handleLog({ message: 'message', status: StatusType.warn, context: { foo: 'bar' } }, logger, COMMON_CONTEXT)
+
+      expect(requests.length).toEqual(1)
+      expect(requests[0].url).toContain(baseConfiguration.logsEndpointBuilder.build('xhr'))
+      expect(getLoggedMessage(requests, 0)).toEqual({
+        date: jasmine.any(Number),
         foo: 'bar',
         message: 'message',
         service: 'service',
-        session_id: SESSION_ID,
+        session_id: jasmine.any(String),
         status: StatusType.warn,
         view: {
-          referrer: document.referrer,
-          url: window.location.href,
+          referrer: 'common_referrer',
+          url: 'common_url',
         },
+        origin: ErrorSource.LOGGER,
       })
-    })
-
-    it('should include RUM context', () => {
-      window.DD_RUM = {
-        getInternalContext() {
-          return { view: { url: 'http://from-rum-context.com', id: 'view-id' } }
-        },
-      }
-      const sendLog = startLogs()
-      sendLog(DEFAULT_MESSAGE, {})
-
-      expect(getLoggedMessage(server, 0).view).toEqual({
-        id: 'view-id',
-        url: 'http://from-rum-context.com',
-      })
-    })
-
-    it('should use the rum internal context related to the error time', () => {
-      window.DD_RUM = {
-        getInternalContext(startTime) {
-          return {
-            foo: startTime === 1234 ? 'b' : 'a',
-          }
-        },
-      }
-      let sendLogStrategy: (message: LogsMessage, currentContext: Context) => void = noop
-      const sendLog = (message: LogsMessage) => {
-        sendLogStrategy(message, {})
-      }
-      sendLogStrategy = startLogs({ errorLogger: new Logger(sendLog) })
-
-      errorObservable.notify({
-        message: 'error!',
-        source: ErrorSource.SOURCE,
-        startClocks: { relative: 1234 as RelativeTime, timeStamp: getTimeStamp(1234 as RelativeTime) },
-        type: 'Error',
-      })
-
-      expect(getLoggedMessage(server, 0).foo).toBe('b')
     })
 
     it('should all use the same batch', () => {
-      const sendLog = startLogs({ configuration: { maxBatchSize: 3 } })
-      sendLog(DEFAULT_MESSAGE, {})
-      sendLog(DEFAULT_MESSAGE, {})
-      sendLog(DEFAULT_MESSAGE, {})
+      ;({ handleLog } = startLogs(
+        initConfiguration,
+        { ...baseConfiguration, batchMessagesLimit: 3 },
+        () => COMMON_CONTEXT,
+        logger
+      ))
 
-      expect(server.requests.length).toEqual(1)
+      handleLog(DEFAULT_MESSAGE, logger)
+      handleLog(DEFAULT_MESSAGE, logger)
+      handleLog(DEFAULT_MESSAGE, logger)
+
+      expect(requests.length).toEqual(1)
     })
 
     it('should send bridge event when bridge is present', () => {
-      updateExperimentalFeatures(['event-bridge'])
       const sendSpy = spyOn(initEventBridgeStub(), 'send')
+      ;({ handleLog: handleLog } = startLogs(initConfiguration, baseConfiguration, () => COMMON_CONTEXT, logger))
 
-      const sendLog = startLogs()
-      sendLog(DEFAULT_MESSAGE, {})
+      handleLog(DEFAULT_MESSAGE, logger)
 
-      expect(server.requests.length).toEqual(0)
-      expect(sendSpy).toHaveBeenCalled()
+      expect(requests.length).toEqual(0)
+      const [message] = sendSpy.calls.mostRecent().args
+      const parsedMessage = JSON.parse(message)
+      expect(parsedMessage).toEqual({
+        eventType: 'log',
+        event: jasmine.objectContaining({ message: 'message' }),
+      })
     })
   })
 
   describe('sampling', () => {
     it('should be applied when event bridge is present', () => {
-      updateExperimentalFeatures(['event-bridge'])
       const sendSpy = spyOn(initEventBridgeStub(), 'send')
 
-      let configuration = { ...baseConfiguration, sampleRate: 0 }
-      let sendLog = originalStartLogs(configuration, new Logger(noop))
-      sendLog(DEFAULT_MESSAGE, {})
+      let configuration = { ...baseConfiguration, sessionSampleRate: 0 }
+      ;({ handleLog } = startLogs(initConfiguration, configuration, () => COMMON_CONTEXT, logger))
+      handleLog(DEFAULT_MESSAGE, logger)
 
       expect(sendSpy).not.toHaveBeenCalled()
 
-      configuration = { ...baseConfiguration, sampleRate: 100 }
-      sendLog = originalStartLogs(configuration, new Logger(noop))
-      sendLog(DEFAULT_MESSAGE, {})
+      configuration = { ...baseConfiguration, sessionSampleRate: 100 }
+      ;({ handleLog } = startLogs(initConfiguration, configuration, () => COMMON_CONTEXT, logger))
+      handleLog(DEFAULT_MESSAGE, logger)
 
       expect(sendSpy).toHaveBeenCalled()
     })
   })
 
-  describe('assemble', () => {
-    let assemble: (message: LogsMessage, currentContext: Context) => Context | undefined
-    let beforeSend: (event: LogsEvent) => void | boolean
+  it('should not print the log twice when console handler is enabled', () => {
+    logger.setHandler([HandlerType.console])
+    ;({ handleLog } = startLogs(
+      initConfiguration,
+      { ...baseConfiguration, forwardConsoleLogs: ['log'] },
+      () => COMMON_CONTEXT,
+      logger
+    ))
 
-    beforeEach(() => {
-      beforeSend = noop
-      assemble = buildAssemble(
-        sessionManager,
-        {
-          ...baseConfiguration,
-          beforeSend: (x: LogsEvent) => beforeSend(x),
-        },
-        noop
-      )
-      window.DD_RUM = {
-        getInternalContext: noop,
-      }
-    })
+    /* eslint-disable-next-line no-console */
+    console.log('foo', 'bar')
 
-    it('should not assemble when sessionManager is not tracked', () => {
-      sessionIsTracked = false
-
-      expect(assemble(DEFAULT_MESSAGE, { foo: 'from-current-context' })).toBeUndefined()
-    })
-
-    it('should not assemble if beforeSend returned false', () => {
-      beforeSend = () => false
-      expect(assemble(DEFAULT_MESSAGE, { foo: 'from-current-context' })).toBeUndefined()
-    })
-
-    it('add default, current and RUM context to message', () => {
-      spyOn(window.DD_RUM!, 'getInternalContext').and.returnValue({
-        view: { url: 'http://from-rum-context.com', id: 'view-id' },
-      })
-
-      const assembledMessage = assemble(DEFAULT_MESSAGE, { foo: 'from-current-context' })
-
-      expect(assembledMessage).toEqual({
-        foo: 'from-current-context',
-        message: DEFAULT_MESSAGE.message,
-        service: 'service',
-        session_id: SESSION_ID,
-        status: DEFAULT_MESSAGE.status,
-        view: { url: 'http://from-rum-context.com', id: 'view-id' },
-      })
-    })
-
-    it('message context should take precedence over RUM context', () => {
-      spyOn(window.DD_RUM!, 'getInternalContext').and.returnValue({ session_id: 'from-rum-context' })
-
-      const assembledMessage = assemble({ ...DEFAULT_MESSAGE, session_id: 'from-message-context' }, {})
-
-      expect(assembledMessage!.session_id).toBe('from-message-context')
-    })
-
-    it('RUM context should take precedence over current context', () => {
-      spyOn(window.DD_RUM!, 'getInternalContext').and.returnValue({ session_id: 'from-rum-context' })
-
-      const assembledMessage = assemble(DEFAULT_MESSAGE, { session_id: 'from-current-context' })
-
-      expect(assembledMessage!.session_id).toBe('from-rum-context')
-    })
-
-    it('current context should take precedence over default context', () => {
-      const assembledMessage = assemble(DEFAULT_MESSAGE, { service: 'from-current-context' })
-
-      expect(assembledMessage!.service).toBe('from-current-context')
-    })
-
-    it('should allow modification of existing fields', () => {
-      beforeSend = (event: LogsEvent) => {
-        event.message = 'modified message'
-        ;(event.service as any) = 'modified service'
-      }
-
-      const assembledMessage = assemble(DEFAULT_MESSAGE, {})
-
-      expect(assembledMessage!.message).toBe('modified message')
-      expect(assembledMessage!.service).toBe('modified service')
-    })
-
-    it('should allow adding new fields', () => {
-      beforeSend = (event: LogsEvent) => {
-        event.foo = 'bar'
-      }
-
-      const assembledMessage = assemble(DEFAULT_MESSAGE, {})
-
-      expect(assembledMessage!.foo).toBe('bar')
-    })
+    expect(consoleLogSpy).toHaveBeenCalledTimes(1)
+    expect(displayLogSpy).not.toHaveBeenCalled()
   })
 
-  describe('logger sessionManager', () => {
-    let sendLog: (message: LogsMessage, context: Context) => void
-
-    beforeEach(() => {
-      sendLog = startLogs()
-    })
-
-    it('when tracked should enable disable logging', () => {
-      sendLog(DEFAULT_MESSAGE, {})
-      expect(server.requests.length).toEqual(1)
-    })
-
-    it('when not tracked should disable logging', () => {
-      sessionIsTracked = false
-      sendLog(DEFAULT_MESSAGE, {})
-      expect(server.requests.length).toEqual(0)
-    })
-
-    it('when type change should enable/disable existing loggers', () => {
-      sendLog(DEFAULT_MESSAGE, {})
-      expect(server.requests.length).toEqual(1)
-
-      sessionIsTracked = false
-      sendLog(DEFAULT_MESSAGE, {})
-      expect(server.requests.length).toEqual(1)
-
-      sessionIsTracked = true
-      sendLog(DEFAULT_MESSAGE, {})
-      expect(server.requests.length).toEqual(2)
-    })
-  })
-
-  describe('error collection', () => {
-    it('should send log errors', () => {
-      const sendLogSpy = jasmine.createSpy()
-      startLogs({ errorLogger: new Logger(sendLogSpy) })
-
-      errorObservable.notify({
-        message: 'error!',
-        source: ErrorSource.SOURCE,
-        startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
-        type: 'Error',
-      })
-
-      expect(sendLogSpy).toHaveBeenCalled()
-      expect(sendLogSpy.calls.first().args).toEqual([
-        {
-          date: 123456789 as TimeStamp,
-          error: { origin: ErrorSource.SOURCE, kind: 'Error', stack: undefined },
-          message: 'error!',
-          status: StatusType.error,
-        },
-      ])
-    })
-  })
-
-  describe('logs limitation', () => {
-    let clock: Clock
-    const configuration = { eventRateLimiterThreshold: 1 }
-    beforeEach(() => {
-      clock = mockClock()
-    })
-
+  describe('logs session creation', () => {
     afterEach(() => {
-      clock.cleanup()
-    })
-    ;[
-      { status: StatusType.error, message: 'Reached max number of errors by minute: 1' },
-      { status: StatusType.warn, message: 'Reached max number of warns by minute: 1' },
-      { status: StatusType.info, message: 'Reached max number of infos by minute: 1' },
-      { status: StatusType.debug, message: 'Reached max number of debugs by minute: 1' },
-      { status: 'unknown' as StatusType, message: 'Reached max number of customs by minute: 1' },
-    ].forEach(({ status, message }) => {
-      it(`stops sending ${status} logs when reaching the limit`, () => {
-        const sendLogSpy = jasmine.createSpy<(message: LogsMessage & { foo?: string }) => void>()
-        const sendLog = startLogs({ errorLogger: new Logger(sendLogSpy), configuration })
-        sendLog({ message: 'foo', status }, {})
-        sendLog({ message: 'bar', status }, {})
-
-        expect(server.requests.length).toEqual(1)
-        expect(getLoggedMessage(server, 0).message).toBe('foo')
-        expect(sendLogSpy).toHaveBeenCalledOnceWith({
-          message,
-          status: StatusType.error,
-          error: {
-            origin: ErrorSource.AGENT,
-            kind: undefined,
-            stack: undefined,
-          },
-          date: Date.now(),
-        })
-      })
-
-      it(`does not take discarded ${status} logs into account`, () => {
-        const sendLogSpy = jasmine.createSpy<(message: LogsMessage & { foo?: string }) => void>()
-        const sendLog = startLogs({
-          errorLogger: new Logger(sendLogSpy),
-          configuration: {
-            ...configuration,
-            beforeSend(event) {
-              if (event.message === 'discard me') {
-                return false
-              }
-            },
-          },
-        })
-        sendLog({ message: 'discard me', status }, {})
-        sendLog({ message: 'discard me', status }, {})
-        sendLog({ message: 'discard me', status }, {})
-        sendLog({ message: 'foo', status }, {})
-
-        expect(server.requests.length).toEqual(1)
-        expect(getLoggedMessage(server, 0).message).toBe('foo')
-        expect(sendLogSpy).not.toHaveBeenCalled()
-      })
-
-      it(`allows to send new ${status}s after a minute`, () => {
-        const sendLog = startLogs({ configuration })
-        sendLog({ message: 'foo', status }, {})
-        sendLog({ message: 'bar', status }, {})
-        clock.tick(ONE_MINUTE)
-        sendLog({ message: 'baz', status }, {})
-
-        expect(server.requests.length).toEqual(2)
-        expect(getLoggedMessage(server, 0).message).toBe('foo')
-        expect(getLoggedMessage(server, 1).message).toBe('baz')
-      })
-
-      it('allows to send logs with a different status when reaching the limit', () => {
-        const otherLogStatus = status === StatusType.error ? 'other' : StatusType.error
-        const sendLog = startLogs({ configuration })
-        sendLog({ message: 'foo', status }, {})
-        sendLog({ message: 'bar', status }, {})
-        sendLog({ message: 'baz', status: otherLogStatus as StatusType }, {})
-
-        expect(server.requests.length).toEqual(2)
-        expect(getLoggedMessage(server, 0).message).toBe('foo')
-        expect(getLoggedMessage(server, 1).message).toBe('baz')
-      })
+      cleanupSyntheticsWorkerValues()
     })
 
-    it('two different custom statuses are accounted by the same limit', () => {
-      const sendLog = startLogs({ configuration })
-      sendLog({ message: 'foo', status: 'foo' as StatusType }, {})
-      sendLog({ message: 'bar', status: 'bar' as StatusType }, {})
+    it('creates a session on normal conditions', () => {
+      ;({ handleLog } = startLogs(initConfiguration, baseConfiguration, () => COMMON_CONTEXT, logger))
 
-      expect(server.requests.length).toEqual(1)
-      expect(getLoggedMessage(server, 0).message).toBe('foo')
+      expect(getCookie(SESSION_COOKIE_NAME)).not.toBeUndefined()
+    })
+
+    it('does not create a session if event bridge is present', () => {
+      initEventBridgeStub()
+      ;({ handleLog } = startLogs(initConfiguration, baseConfiguration, () => COMMON_CONTEXT, logger))
+
+      expect(getCookie(SESSION_COOKIE_NAME)).toBeUndefined()
+    })
+
+    it('does not create a session if synthetics worker will inject RUM', () => {
+      mockSyntheticsWorkerValues({ injectsRum: true })
+      ;({ handleLog } = startLogs(initConfiguration, baseConfiguration, () => COMMON_CONTEXT, logger))
+
+      expect(getCookie(SESSION_COOKIE_NAME)).toBeUndefined()
     })
   })
 })

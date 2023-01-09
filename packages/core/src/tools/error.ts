@@ -1,7 +1,19 @@
-import { callMonitored } from '../domain/internalMonitoring'
-import { computeStackTrace, StackTrace } from '../domain/tracekit'
-import { ClocksState } from './timeUtils'
+import type { StackTrace } from '../domain/tracekit'
+import { computeStackTrace } from '../domain/tracekit'
+import { callMonitored } from './monitor'
+import type { ClocksState } from './timeUtils'
 import { jsonStringify, noop } from './utils'
+
+export interface ErrorWithCause extends Error {
+  cause?: Error
+}
+
+export type RawErrorCause = {
+  message: string
+  source: string
+  type?: string
+  stack?: string
+}
 
 export interface RawError {
   startClocks: ClocksState
@@ -9,14 +21,10 @@ export interface RawError {
   type?: string
   stack?: string
   source: ErrorSource
-  resource?: {
-    url: string
-    statusCode: number
-    method: string
-  }
   originalError?: unknown
   handling?: ErrorHandling
   handlingStack?: string
+  causes?: RawErrorCause[]
 }
 
 export const ErrorSource = {
@@ -26,25 +34,43 @@ export const ErrorSource = {
   LOGGER: 'logger',
   NETWORK: 'network',
   SOURCE: 'source',
+  REPORT: 'report',
 } as const
 
-export enum ErrorHandling {
+export const enum ErrorHandling {
   HANDLED = 'handled',
   UNHANDLED = 'unhandled',
 }
 
-// eslint-disable-next-line @typescript-eslint/no-redeclare
 export type ErrorSource = typeof ErrorSource[keyof typeof ErrorSource]
 
-export function formatUnknownError(
-  stackTrace: StackTrace | undefined,
-  errorObject: any,
-  nonErrorPrefix: string,
+type RawErrorParams = {
+  stackTrace?: StackTrace
+  originalError: unknown
+
   handlingStack?: string
-) {
-  if (!stackTrace || (stackTrace.message === undefined && !(errorObject instanceof Error))) {
+  startClocks: ClocksState
+  nonErrorPrefix: string
+  source: ErrorSource
+  handling: ErrorHandling
+}
+
+export function computeRawError({
+  stackTrace,
+  originalError,
+  handlingStack,
+  startClocks,
+  nonErrorPrefix,
+  source,
+  handling,
+}: RawErrorParams): RawError {
+  if (!stackTrace || (stackTrace.message === undefined && !(originalError instanceof Error))) {
     return {
-      message: `${nonErrorPrefix} ${jsonStringify(errorObject)!}`,
+      startClocks,
+      source,
+      handling,
+      originalError,
+      message: `${nonErrorPrefix} ${jsonStringify(originalError)!}`,
       stack: 'No stack, consider using an instance of Error',
       handlingStack,
       type: stackTrace && stackTrace.name,
@@ -52,10 +78,15 @@ export function formatUnknownError(
   }
 
   return {
+    startClocks,
+    source,
+    handling,
+    originalError,
     message: stackTrace.message || 'Empty message',
     stack: toStackTraceString(stackTrace),
     handlingStack,
     type: stackTrace.name,
+    causes: flattenErrorCauses(originalError as ErrorWithCause, source),
   }
 }
 
@@ -71,6 +102,10 @@ export function toStackTraceString(stack: StackTrace) {
   return result
 }
 
+export function getFileFromStackTraceString(stack: string) {
+  return /@ (.+)/.exec(stack)?.[1]
+}
+
 export function formatErrorMessage(stack: StackTrace) {
   return `${stack.name || 'Error'}: ${stack.message!}`
 }
@@ -80,7 +115,7 @@ export function formatErrorMessage(stack: StackTrace) {
  
  Constraints:
  - Has to be called at the utmost position of the call stack.
- - No internal monitoring should encapsulate the function, that is why we need to use callMonitored inside of it.
+ - No monitored function should encapsulate it, that is why we need to use callMonitored inside it.
  */
 export function createHandlingStack(): string {
   /**
@@ -109,4 +144,20 @@ export function createHandlingStack(): string {
   })
 
   return formattedStack!
+}
+
+export function flattenErrorCauses(error: ErrorWithCause, parentSource: ErrorSource): RawErrorCause[] | undefined {
+  let currentError = error
+  const causes: RawErrorCause[] = []
+  while (currentError?.cause instanceof Error && causes.length < 10) {
+    const stackTrace = computeStackTrace(currentError.cause)
+    causes.push({
+      message: currentError.cause.message,
+      source: parentSource,
+      type: stackTrace?.name,
+      stack: stackTrace && toStackTraceString(stackTrace),
+    })
+    currentError = currentError.cause
+  }
+  return causes.length ? causes : undefined
 }

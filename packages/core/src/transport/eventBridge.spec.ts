@@ -1,4 +1,3 @@
-import { resetExperimentalFeatures, updateExperimentalFeatures } from '..'
 import { deleteEventBridgeStub, initEventBridgeStub } from '../../test/specHelper'
 import { getEventBridge, canUseEventBridge } from './eventBridge'
 
@@ -6,44 +5,31 @@ describe('canUseEventBridge', () => {
   const allowedWebViewHosts = ['foo.bar']
 
   afterEach(() => {
-    resetExperimentalFeatures()
     deleteEventBridgeStub()
   })
 
-  describe('when ff enabled', () => {
-    beforeEach(() => {
-      updateExperimentalFeatures(['event-bridge'])
-    })
-
-    it('should detect when the bridge is present and the webView host is allowed', () => {
-      initEventBridgeStub()
-      expect(canUseEventBridge()).toBeTrue()
-    })
-
-    it('should not detect when the bridge is absent', () => {
-      expect(canUseEventBridge()).toBeFalse()
-    })
-
-    it('should not detect when the bridge is present and the webView host is not allowed', () => {
-      initEventBridgeStub(allowedWebViewHosts)
-      expect(canUseEventBridge()).toBeFalse()
-    })
+  it('should detect when the bridge is present and the webView host is allowed', () => {
+    initEventBridgeStub(allowedWebViewHosts)
+    expect(canUseEventBridge('foo.bar')).toBeTrue()
+    expect(canUseEventBridge('baz.foo.bar')).toBeTrue()
+    expect(canUseEventBridge('www.foo.bar')).toBeTrue()
+    expect(canUseEventBridge('www.qux.foo.bar')).toBeTrue()
   })
 
-  describe('when ff disabled', () => {
-    it('should not detect when the bridge is present and the webView host is allowed', () => {
-      initEventBridgeStub()
-      expect(canUseEventBridge()).toBeFalse()
-    })
+  it('should not detect when the bridge is present and the webView host is not allowed', () => {
+    initEventBridgeStub(allowedWebViewHosts)
+    expect(canUseEventBridge('foo.com')).toBeFalse()
+    expect(canUseEventBridge('foo.bar.baz')).toBeFalse()
+    expect(canUseEventBridge('bazfoo.bar')).toBeFalse()
+  })
 
-    it('should not detect when the bridge is present and the webView host is not allowed', () => {
-      initEventBridgeStub(allowedWebViewHosts)
-      expect(canUseEventBridge()).toBeFalse()
-    })
+  it('should not detect when the bridge on the parent domain if only the subdomain is allowed', () => {
+    initEventBridgeStub(['baz.foo.bar'])
+    expect(canUseEventBridge('foo.bar')).toBeFalse()
+  })
 
-    it('should not detect when the bridge is absent', () => {
-      expect(canUseEventBridge()).toBeFalse()
-    })
+  it('should not detect when the bridge is absent', () => {
+    expect(canUseEventBridge()).toBeFalse()
   })
 })
 
@@ -51,13 +37,11 @@ describe('getEventBridge', () => {
   let sendSpy: jasmine.Spy<(msg: string) => void>
 
   beforeEach(() => {
-    updateExperimentalFeatures(['event-bridge'])
     const eventBridgeStub = initEventBridgeStub()
     sendSpy = spyOn(eventBridgeStub, 'send')
   })
 
   afterEach(() => {
-    resetExperimentalFeatures()
     deleteEventBridgeStub()
   })
 

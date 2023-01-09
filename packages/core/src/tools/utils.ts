@@ -1,44 +1,15 @@
-import { monitor } from '../domain/internalMonitoring'
+import { display } from './display'
+import { monitor } from './monitor'
 
 export const ONE_SECOND = 1000
 export const ONE_MINUTE = 60 * ONE_SECOND
 export const ONE_HOUR = 60 * ONE_MINUTE
 export const ONE_DAY = 24 * ONE_HOUR
 export const ONE_YEAR = 365 * ONE_DAY
-export const ONE_KILO_BYTE = 1024
+export const ONE_KIBI_BYTE = 1024
+export const ONE_MEBI_BYTE = 1024 * ONE_KIBI_BYTE
 
-export const enum DOM_EVENT {
-  BEFORE_UNLOAD = 'beforeunload',
-  CLICK = 'click',
-  DBL_CLICK = 'dblclick',
-  KEY_DOWN = 'keydown',
-  LOAD = 'load',
-  POP_STATE = 'popstate',
-  SCROLL = 'scroll',
-  TOUCH_START = 'touchstart',
-  TOUCH_END = 'touchend',
-  TOUCH_MOVE = 'touchmove',
-  VISIBILITY_CHANGE = 'visibilitychange',
-  DOM_CONTENT_LOADED = 'DOMContentLoaded',
-  POINTER_DOWN = 'pointerdown',
-  POINTER_UP = 'pointerup',
-  POINTER_CANCEL = 'pointercancel',
-  HASH_CHANGE = 'hashchange',
-  PAGE_HIDE = 'pagehide',
-  MOUSE_DOWN = 'mousedown',
-  MOUSE_UP = 'mouseup',
-  MOUSE_MOVE = 'mousemove',
-  FOCUS = 'focus',
-  BLUR = 'blur',
-  CONTEXT_MENU = 'contextmenu',
-  RESIZE = 'resize',
-  CHANGE = 'change',
-  INPUT = 'input',
-  PLAY = 'play',
-  PAUSE = 'pause',
-}
-
-export enum ResourceType {
+export const enum ResourceType {
   DOCUMENT = 'document',
   XHR = 'xhr',
   BEACON = 'beacon',
@@ -51,7 +22,7 @@ export enum ResourceType {
   OTHER = 'other',
 }
 
-export enum RequestType {
+export const enum RequestType {
   FETCH = ResourceType.FETCH,
   XHR = ResourceType.XHR,
 }
@@ -100,6 +71,9 @@ interface Assignable {
   [key: string]: any
 }
 
+export function assign<T, U>(target: T, source: U): T & U
+export function assign<T, U, V>(target: T, source1: U, source2: V): T & U & V
+export function assign<T, U, V, W>(target: T, source1: U, source2: V, source3: W): T & U & V & W
 export function assign(target: Assignable, ...toAssign: Assignable[]) {
   toAssign.forEach((source: Assignable) => {
     for (const key in source) {
@@ -108,6 +82,11 @@ export function assign(target: Assignable, ...toAssign: Assignable[]) {
       }
     }
   })
+  return target
+}
+
+export function shallowClone<T>(object: T): T & Record<string, never> {
+  return assign({}, object)
 }
 
 /**
@@ -136,61 +115,55 @@ export function round(num: number, decimals: 0 | 1 | 2 | 3 | 4) {
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 export function noop() {}
 
-interface ObjectWithToJSON {
-  toJSON: (() => object) | undefined
-}
-
-type OriginalToJSON = [boolean, undefined | (() => object)]
-
 /**
- * Custom implementation of JSON.stringify that ignores value.toJSON.
- * We need to do that because some sites badly override toJSON on certain objects.
- * Note this still supposes that JSON.stringify is correct...
+ * Custom implementation of JSON.stringify that ignores some toJSON methods. We need to do that
+ * because some sites badly override toJSON on certain objects. Removing all toJSON methods from
+ * nested values would be too costly, so we just detach them from the root value, and native classes
+ * used to build JSON values (Array and Object).
+ *
+ * Note: this still assumes that JSON.stringify is correct.
  */
 export function jsonStringify(
   value: unknown,
   replacer?: Array<string | number>,
   space?: string | number
 ): string | undefined {
-  if (value === null || value === undefined) {
+  if (typeof value !== 'object' || value === null) {
     return JSON.stringify(value)
   }
-  let originalToJSON: OriginalToJSON = [false, undefined]
-  if (hasToJSON(value)) {
-    // We need to add a flag and not rely on the truthiness of value.toJSON
-    // because it can be set but undefined and that's actually significant.
-    originalToJSON = [true, value.toJSON]
-    delete value.toJSON
-  }
 
-  let originalProtoToJSON: OriginalToJSON = [false, undefined]
-  let prototype
-  if (typeof value === 'object') {
-    prototype = Object.getPrototypeOf(value) as object
-    if (hasToJSON(prototype)) {
-      originalProtoToJSON = [true, prototype.toJSON]
-      delete prototype.toJSON
-    }
-  }
+  // Note: The order matter here. We need to detach toJSON methods on parent classes before their
+  // subclasses.
+  const restoreObjectPrototypeToJson = detachToJsonMethod(Object.prototype)
+  const restoreArrayPrototypeToJson = detachToJsonMethod(Array.prototype)
+  const restoreValuePrototypeToJson = detachToJsonMethod(Object.getPrototypeOf(value))
+  const restoreValueToJson = detachToJsonMethod(value)
 
-  let result: string
   try {
-    result = JSON.stringify(value, replacer, space)
+    return JSON.stringify(value, replacer, space)
   } catch {
-    result = '<error: unable to serialize object>'
+    return '<error: unable to serialize object>'
   } finally {
-    if (originalToJSON[0]) {
-      ;(value as ObjectWithToJSON).toJSON = originalToJSON[1]
-    }
-    if (originalProtoToJSON[0]) {
-      ;(prototype as ObjectWithToJSON).toJSON = originalProtoToJSON[1]
-    }
+    restoreObjectPrototypeToJson()
+    restoreArrayPrototypeToJson()
+    restoreValuePrototypeToJson()
+    restoreValueToJson()
   }
-  return result
 }
 
-function hasToJSON(value: unknown): value is ObjectWithToJSON {
-  return typeof value === 'object' && value !== null && Object.prototype.hasOwnProperty.call(value, 'toJSON')
+interface ObjectWithToJsonMethod {
+  toJSON: unknown
+}
+function detachToJsonMethod(value: object) {
+  const object = value as ObjectWithToJsonMethod
+  const objectToJson = object.toJSON
+  if (objectToJson) {
+    delete object.toJSON
+    return () => {
+      object.toJSON = objectToJson
+    }
+  }
+  return noop
 }
 
 export function includes(candidate: string, search: string): boolean
@@ -199,11 +172,47 @@ export function includes(candidate: string | unknown[], search: any) {
   return candidate.indexOf(search) !== -1
 }
 
+export function arrayFrom<T>(arrayLike: ArrayLike<T> | Set<T>): T[] {
+  if (Array.from) {
+    return Array.from(arrayLike)
+  }
+
+  const array = []
+
+  if (arrayLike instanceof Set) {
+    arrayLike.forEach((item) => array.push(item))
+  } else {
+    for (let i = 0; i < arrayLike.length; i++) {
+      array.push(arrayLike[i])
+    }
+  }
+
+  return array
+}
+
 export function find<T, S extends T>(
+  array: ArrayLike<T>,
+  predicate: (item: T, index: number) => item is S
+): S | undefined
+export function find<T>(array: ArrayLike<T>, predicate: (item: T, index: number) => boolean): T | undefined
+export function find(
+  array: ArrayLike<unknown>,
+  predicate: (item: unknown, index: number) => boolean
+): unknown | undefined {
+  for (let i = 0; i < array.length; i += 1) {
+    const item = array[i]
+    if (predicate(item, i)) {
+      return item
+    }
+  }
+  return undefined
+}
+
+export function findLast<T, S extends T>(
   array: T[],
   predicate: (item: T, index: number, array: T[]) => item is S
 ): S | undefined {
-  for (let i = 0; i < array.length; i += 1) {
+  for (let i = array.length - 1; i >= 0; i -= 1) {
     const item = array[i]
     if (predicate(item, i, array)) {
       return item
@@ -244,12 +253,20 @@ export function mapValues<A, B>(object: { [key: string]: A }, fn: (arg: A) => B)
   return newObject
 }
 
+export function startsWith(candidate: string, search: string) {
+  return candidate.slice(0, search.length) === search
+}
+
+export function endsWith(candidate: string, search: string) {
+  return candidate.slice(-search.length) === search
+}
+
 /**
  * inspired by https://mathiasbynens.be/notes/globalthis
  */
 export function getGlobalObject<T>(): T {
   if (typeof globalThis === 'object') {
-    return (globalThis as unknown) as T
+    return globalThis as unknown as T
   }
   Object.defineProperty(Object.prototype, '_dd_temp_', {
     get() {
@@ -297,96 +314,27 @@ export function findCommaSeparatedValue(rawString: string, name: string) {
   return matches ? matches[1] : undefined
 }
 
-export function safeTruncate(candidate: string, length: number) {
+export function safeTruncate(candidate: string, length: number, suffix = '') {
   const lastChar = candidate.charCodeAt(length - 1)
-  // check if it is the high part of a surrogate pair
-  if (lastChar >= 0xd800 && lastChar <= 0xdbff) {
-    return candidate.slice(0, length + 1)
+  const isLastCharSurrogatePair = lastChar >= 0xd800 && lastChar <= 0xdbff
+  const correctedLength = isLastCharSurrogatePair ? length + 1 : length
+
+  if (candidate.length <= correctedLength) {
+    return candidate
   }
-  return candidate.slice(0, length)
+
+  return `${candidate.slice(0, correctedLength)}${suffix}`
 }
 
-export interface EventEmitter {
-  addEventListener(
-    event: DOM_EVENT,
-    listener: (event: Event) => void,
-    options?: boolean | { capture?: boolean; passive?: boolean }
-  ): void
-  removeEventListener(
-    event: DOM_EVENT,
-    listener: (event: Event) => void,
-    options?: boolean | { capture?: boolean; passive?: boolean }
-  ): void
-}
-
-interface AddEventListenerOptions {
-  once?: boolean
-  capture?: boolean
-  passive?: boolean
-}
-
-/**
- * Add an event listener to an event emitter object (Window, Element, mock object...).  This provides
- * a few conveniences compared to using `element.addEventListener` directly:
- *
- * * supports IE11 by: using an option object only if needed and emulating the `once` option
- *
- * * wraps the listener with a `monitor` function
- *
- * * returns a `stop` function to remove the listener
- */
-export function addEventListener<E extends Event>(
-  emitter: EventEmitter,
-  event: DOM_EVENT,
-  listener: (event: E) => void,
-  options?: AddEventListenerOptions
-) {
-  return addEventListeners(emitter, [event], listener, options)
-}
-
-/**
- * Add event listeners to an event emitter object (Window, Element, mock object...).  This provides
- * a few conveniences compared to using `element.addEventListener` directly:
- *
- * * supports IE11 by: using an option object only if needed and emulating the `once` option
- *
- * * wraps the listener with a `monitor` function
- *
- * * returns a `stop` function to remove the listener
- *
- * * with `once: true`, the listener will be called at most once, even if different events are listened
- */
-export function addEventListeners<E extends Event>(
-  emitter: EventEmitter,
-  events: DOM_EVENT[],
-  listener: (event: E) => void,
-  { once, capture, passive }: { once?: boolean; capture?: boolean; passive?: boolean } = {}
-) {
-  const wrappedListener = monitor(
-    once
-      ? (event: Event) => {
-          stop()
-          listener(event as E)
-        }
-      : (listener as (event: Event) => void)
-  )
-
-  const options = passive ? { capture, passive } : capture
-  events.forEach((event) => emitter.addEventListener(event, wrappedListener, options))
-  const stop = () => events.forEach((event) => emitter.removeEventListener(event, wrappedListener, options))
-
-  return {
-    stop,
+export function elementMatches(element: Element & { msMatchesSelector?(selector: string): boolean }, selector: string) {
+  if (element.matches) {
+    return element.matches(selector)
   }
-}
-
-export function runOnReadyState(expectedReadyState: 'complete' | 'interactive', callback: () => void) {
-  if (document.readyState === expectedReadyState || document.readyState === 'complete') {
-    callback()
-  } else {
-    const eventName = expectedReadyState === 'complete' ? DOM_EVENT.LOAD : DOM_EVENT.DOM_CONTENT_LOADED
-    addEventListener(window, eventName, callback, { once: true })
+  // IE11 support
+  if (element.msMatchesSelector) {
+    return element.msMatchesSelector(selector)
   }
+  return false
 }
 
 /**
@@ -470,7 +418,7 @@ export function mergeInto<D, S>(
     // primitive values - just return source
     return source as Merged<D, S>
   } else if (source instanceof Date) {
-    return (new Date(source.getTime()) as unknown) as Merged<D, S>
+    return new Date(source.getTime()) as unknown as Merged<D, S>
   } else if (source instanceof RegExp) {
     const flags =
       source.flags ||
@@ -482,18 +430,18 @@ export function mergeInto<D, S>(
         source.sticky ? 'y' : '',
         source.unicode ? 'u' : '',
       ].join('')
-    return (new RegExp(source.source, flags) as unknown) as Merged<D, S>
+    return new RegExp(source.source, flags) as unknown as Merged<D, S>
   }
 
   if (circularReferenceChecker.hasAlreadyBeenSeen(source)) {
     // remove circular references
-    return (undefined as unknown) as Merged<D, S>
+    return undefined as unknown as Merged<D, S>
   } else if (Array.isArray(source)) {
     const merged: any[] = Array.isArray(destination) ? destination : []
     for (let i = 0; i < source.length; ++i) {
       merged[i] = mergeInto(merged[i], source[i], circularReferenceChecker)
     }
-    return (merged as unknown) as Merged<D, S>
+    return merged as unknown as Merged<D, S>
   }
 
   const merged: Record<any, any> = getType(destination) === 'object' ? destination : {}
@@ -502,7 +450,7 @@ export function mergeInto<D, S>(
       merged[key] = mergeInto(merged[key], source[key], circularReferenceChecker)
     }
   }
-  return (merged as unknown) as Merged<D, S>
+  return merged as unknown as Merged<D, S>
 }
 
 /**
@@ -535,6 +483,33 @@ export function combine<A, B, C, D, E>(
   d: D,
   e: E
 ): Combined<Combined<Combined<Combined<A, B>, C>, D>, E>
+export function combine<A, B, C, D, E, F>(
+  a: A,
+  b: B,
+  c: C,
+  d: D,
+  e: E,
+  f: F
+): Combined<Combined<Combined<Combined<Combined<A, B>, C>, D>, E>, F>
+export function combine<A, B, C, D, E, F, G>(
+  a: A,
+  b: B,
+  c: C,
+  d: D,
+  e: E,
+  f: F,
+  g: G
+): Combined<Combined<Combined<Combined<Combined<Combined<A, B>, C>, D>, E>, F>, G>
+export function combine<A, B, C, D, E, F, G, H>(
+  a: A,
+  b: B,
+  c: C,
+  d: D,
+  e: E,
+  f: F,
+  g: G,
+  h: H
+): Combined<Combined<Combined<Combined<Combined<Combined<Combined<A, B>, C>, D>, E>, F>, G>, H>
 export function combine(...sources: any[]): unknown {
   let destination: any
 
@@ -551,3 +526,71 @@ export function combine(...sources: any[]): unknown {
 }
 
 export type TimeoutId = ReturnType<typeof setTimeout>
+
+export function requestIdleCallback(callback: () => void, opts?: { timeout?: number }) {
+  // Use 'requestIdleCallback' when available: it will throttle the mutation processing if the
+  // browser is busy rendering frames (ex: when frames are below 60fps). When not available, the
+  // fallback on 'requestAnimationFrame' will still ensure the mutations are processed after any
+  // browser rendering process (Layout, Recalculate Style, etc.), so we can serialize DOM nodes
+  // efficiently.
+  if (window.requestIdleCallback) {
+    const id = window.requestIdleCallback(monitor(callback), opts)
+    return () => window.cancelIdleCallback(id)
+  }
+  const id = window.requestAnimationFrame(monitor(callback))
+  return () => window.cancelAnimationFrame(id)
+}
+
+export function removeDuplicates<T>(array: T[]) {
+  const set = new Set<T>()
+  array.forEach((item) => set.add(item))
+  return arrayFrom(set)
+}
+
+export type MatchOption = string | RegExp | ((value: string) => boolean)
+export function isMatchOption(item: unknown): item is MatchOption {
+  const itemType = getType(item)
+  return itemType === 'string' || itemType === 'function' || item instanceof RegExp
+}
+/**
+ * Returns true if value can be matched by at least one of the provided MatchOptions.
+ * When comparing strings, setting useStartsWith to true will compare the value with the start of
+ * the option, instead of requiring an exact match.
+ */
+export function matchList(list: MatchOption[], value: string, useStartsWith = false): boolean {
+  return list.some((item) => {
+    try {
+      if (typeof item === 'function') {
+        return item(value)
+      } else if (item instanceof RegExp) {
+        return item.test(value)
+      } else if (typeof item === 'string') {
+        return useStartsWith ? startsWith(value, item) : item === value
+      }
+    } catch (e) {
+      display.error(e)
+    }
+    return false
+  })
+}
+
+// https://github.com/jquery/jquery/blob/a684e6ba836f7c553968d7d026ed7941e1a612d8/src/selector/escapeSelector.js
+export function cssEscape(str: string) {
+  if (window.CSS && window.CSS.escape) {
+    return window.CSS.escape(str)
+  }
+
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/([\0-\x1f\x7f]|^-?\d)|^-$|[^\x80-\uFFFF\w-]/g, function (ch, asCodePoint) {
+    if (asCodePoint) {
+      // U+0000 NULL becomes U+FFFD REPLACEMENT CHARACTER
+      if (ch === '\0') {
+        return '\uFFFD'
+      }
+      // Control characters and (dependent upon position) numbers get escaped as code points
+      return `${ch.slice(0, -1)}\\${ch.charCodeAt(ch.length - 1).toString(16)} `
+    }
+    // Other potentially-special ASCII characters get backslash-escaped
+    return `\\${ch}`
+  })
+}

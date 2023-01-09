@@ -1,26 +1,26 @@
-import { DeflateWorker, DeflateWorkerAction, DeflateWorkerListener } from '../src/domain/segmentCollection'
-import {
-  IncrementalSource,
-  MutationPayload,
-  MutationData,
+import type { DeflateWorker, DeflateWorkerAction, DeflateWorkerListener } from '../src/domain/segmentCollection'
+import type {
+  BrowserFullSnapshotRecord,
+  BrowserIncrementalSnapshotRecord,
+  BrowserMutationPayload,
+  BrowserMutationData,
+  BrowserSegment,
   ElementNode,
-  NodeType,
+  FrustrationRecord,
   SerializedNode,
   SerializedNodeWithId,
   TextNode,
-} from '../src/domain/record'
-import {
-  FullSnapshotRecord,
-  IncrementalSnapshotRecord,
   MetaRecord,
+  MouseInteractionType,
   VisualViewportRecord,
-  RecordType,
-  Segment,
+  BrowserRecord,
+  DocumentFragmentNode,
 } from '../src/types'
+import { RecordType, IncrementalSource, NodeType } from '../src/types'
 
 export class MockWorker implements DeflateWorker {
   readonly pendingMessages: DeflateWorkerAction[] = []
-  private rawSize = 0
+  private rawBytesCount = 0
   private deflatedData: Uint8Array[] = []
   private listeners: {
     message: DeflateWorkerListener[]
@@ -86,14 +86,14 @@ export class MockWorker implements DeflateWorker {
           break
         case 'write':
           {
-            const additionalRawSize = this.pushData(message.data)
+            const additionalBytesCount = this.pushData(message.data)
             this.listeners.message.forEach((listener) =>
               listener({
                 data: {
                   type: 'wrote',
                   id: message.id,
-                  compressedSize: uint8ArraysSize(this.deflatedData),
-                  additionalRawSize,
+                  compressedBytesCount: uint8ArraysSize(this.deflatedData),
+                  additionalBytesCount,
                 },
               })
             )
@@ -101,20 +101,20 @@ export class MockWorker implements DeflateWorker {
           break
         case 'flush':
           {
-            const additionalRawSize = this.pushData(message.data)
+            const additionalBytesCount = this.pushData(message.data)
             this.listeners.message.forEach((listener) =>
               listener({
                 data: {
                   type: 'flushed',
                   id: message.id,
                   result: mergeUint8Arrays(this.deflatedData),
-                  rawSize: this.rawSize,
-                  additionalRawSize,
+                  rawBytesCount: this.rawBytesCount,
+                  additionalBytesCount,
                 },
               })
             )
             this.deflatedData.length = 0
-            this.rawSize = 0
+            this.rawBytesCount = 0
           }
           break
       }
@@ -132,7 +132,7 @@ export class MockWorker implements DeflateWorker {
 
   private pushData(data?: string) {
     const encodedData = new TextEncoder().encode(data)
-    this.rawSize += encodedData.length
+    this.rawBytesCount += encodedData.length
     // In the mock worker, for simplicity, we'll just use the UTF-8 encoded string instead of deflating it.
     this.deflatedData.push(encodedData)
     return encodedData.length
@@ -154,7 +154,7 @@ function mergeUint8Arrays(arrays: Uint8Array[]) {
 }
 
 export function parseSegment(bytes: Uint8Array) {
-  return JSON.parse(new TextDecoder().decode(bytes)) as Segment
+  return JSON.parse(new TextDecoder().decode(bytes)) as BrowserSegment
 }
 
 export function collectAsyncCalls<F extends jasmine.Func>(spy: jasmine.Spy<F>) {
@@ -182,32 +182,53 @@ export function collectAsyncCalls<F extends jasmine.Func>(spy: jasmine.Spy<F>) {
 }
 
 // Returns the first MetaRecord in a Segment, if any.
-export function findMeta(segment: Segment): MetaRecord | null {
+export function findMeta(segment: BrowserSegment): MetaRecord | null {
   return segment.records.find((record) => record.type === RecordType.Meta) as MetaRecord
 }
 
 // Returns the first FullSnapshotRecord in a Segment, if any.
-export function findFullSnapshot(segment: Segment): FullSnapshotRecord | null {
-  return segment.records.find((record) => record.type === RecordType.FullSnapshot) as FullSnapshotRecord
+export function findFullSnapshot({ records }: { records: BrowserRecord[] }): BrowserFullSnapshotRecord | null {
+  return records.find((record) => record.type === RecordType.FullSnapshot) as BrowserFullSnapshotRecord
 }
 
 // Returns all the VisualViewportRecords in a Segment, if any.
-export function findAllVisualViewports(segment: Segment): VisualViewportRecord[] {
+export function findAllVisualViewports(segment: BrowserSegment): VisualViewportRecord[] {
   return segment.records.filter((record) => record.type === RecordType.VisualViewport) as VisualViewportRecord[]
 }
 
 // Returns the first IncrementalSnapshotRecord of a given source in a Segment, if any.
-export function findIncrementalSnapshot(segment: Segment, source: IncrementalSource): IncrementalSnapshotRecord | null {
+export function findIncrementalSnapshot(
+  segment: BrowserSegment,
+  source: IncrementalSource
+): BrowserIncrementalSnapshotRecord | null {
   return segment.records.find(
     (record) => record.type === RecordType.IncrementalSnapshot && record.data.source === source
-  ) as IncrementalSnapshotRecord
+  ) as BrowserIncrementalSnapshotRecord
 }
 
 // Returns all the IncrementalSnapshotRecord of a given source in a Segment, if any.
-export function findAllIncrementalSnapshots(segment: Segment, source: IncrementalSource): IncrementalSnapshotRecord[] {
+export function findAllIncrementalSnapshots(
+  segment: BrowserSegment,
+  source: IncrementalSource
+): BrowserIncrementalSnapshotRecord[] {
   return segment.records.filter(
     (record) => record.type === RecordType.IncrementalSnapshot && record.data.source === source
-  ) as IncrementalSnapshotRecord[]
+  ) as BrowserIncrementalSnapshotRecord[]
+}
+
+// Returns all the FrustrationRecords in the given Segment, if any.
+export function findAllFrustrationRecords(segment: BrowserSegment): FrustrationRecord[] {
+  return segment.records.filter((record) => record.type === RecordType.FrustrationRecord) as FrustrationRecord[]
+}
+
+// Returns all the IncrementalSnapshotRecords of the given MouseInteraction source, if any
+export function findMouseInteractionRecords(
+  segment: BrowserSegment,
+  source: MouseInteractionType
+): BrowserIncrementalSnapshotRecord[] {
+  return findAllIncrementalSnapshots(segment, IncrementalSource.MouseInteraction).filter(
+    (record) => 'type' in record.data && record.data.type === source
+  )
 }
 
 // Returns the textContent of a ElementNode, if any.
@@ -358,6 +379,7 @@ export function createMutationPayloadValidator(initialDocument: SerializedNodeWi
    */
   function expectNewNode(node: Optional<ElementNode, 'childNodes' | 'attributes'>): ExpectedNode
   function expectNewNode(node: TextNode): ExpectedNode
+  function expectNewNode(node: Partial<DocumentFragmentNode>): ExpectedNode
   function expectNewNode(node: Partial<SerializedNode>) {
     maxNodeId += 1
     if (node.type === NodeType.Element) {
@@ -374,7 +396,7 @@ export function createMutationPayloadValidator(initialDocument: SerializedNodeWi
     /**
      * Validates the mutation payload against the expected text, attribute, add and remove mutations.
      */
-    validate: (payload: MutationPayload, expected: ExpectedMutationsPayload) => {
+    validate: (payload: BrowserMutationPayload, expected: ExpectedMutationsPayload) => {
       payload = removeUndefinedValues(payload)
 
       expect(payload.adds).toEqual(
@@ -454,12 +476,12 @@ export function createMutationPayloadValidator(initialDocument: SerializedNodeWi
  * Validate the first and only mutation record of a segment against the expected text, attribute,
  * add and remove mutations.
  */
-export function createMutationPayloadValidatorFromSegment(segment: Segment) {
+export function createMutationPayloadValidatorFromSegment(segment: BrowserSegment) {
   const fullSnapshot = findFullSnapshot(segment)!
   expect(fullSnapshot).toBeTruthy()
 
   const mutations = findAllIncrementalSnapshots(segment, IncrementalSource.Mutation) as Array<{
-    data: MutationData
+    data: BrowserMutationData
   }>
   expect(mutations.length).toBe(1)
 
@@ -469,3 +491,10 @@ export function createMutationPayloadValidatorFromSegment(segment: Segment) {
     validate: (expected: ExpectedMutationsPayload) => mutationPayloadValidator.validate(mutations[0].data, expected),
   }
 }
+
+/**
+ * Simplify asserting record lengths across multiple devices when not all record types are supported
+ */
+export const recordsPerFullSnapshot = () =>
+  // Meta, Focus, FullSnapshot, VisualViewport (support limited)
+  window.visualViewport ? 4 : 3

@@ -1,39 +1,57 @@
 import { noop } from '@datadog/browser-core'
 import { RumEventType } from '../rawRumEvent.types'
-import { LifeCycle, LifeCycleEventType } from './lifeCycle'
+import type { RumActionEvent, RumErrorEvent, RumLongTaskEvent, RumResourceEvent } from '../rumEvent.types'
+import type { LifeCycle } from './lifeCycle'
+import { LifeCycleEventType } from './lifeCycle'
 
 export interface EventCounts {
   errorCount: number
-  userActionCount: number
+  actionCount: number
   longTaskCount: number
   resourceCount: number
+  frustrationCount: number
 }
 
-export function trackEventCounts(lifeCycle: LifeCycle, callback: (eventCounts: EventCounts) => void = noop) {
-  const eventCounts = {
+export function trackEventCounts({
+  lifeCycle,
+  isChildEvent,
+  onChange: callback = noop,
+}: {
+  lifeCycle: LifeCycle
+  isChildEvent: (event: RumActionEvent | RumErrorEvent | RumLongTaskEvent | RumResourceEvent) => boolean
+  onChange?: () => void
+}) {
+  const eventCounts: EventCounts = {
     errorCount: 0,
     longTaskCount: 0,
     resourceCount: 0,
-    userActionCount: 0,
+    actionCount: 0,
+    frustrationCount: 0,
   }
 
-  const subscription = lifeCycle.subscribe(LifeCycleEventType.RUM_EVENT_COLLECTED, ({ type }): void => {
-    switch (type) {
+  const subscription = lifeCycle.subscribe(LifeCycleEventType.RUM_EVENT_COLLECTED, (event): void => {
+    if (event.type === 'view' || !isChildEvent(event)) {
+      return
+    }
+    switch (event.type) {
       case RumEventType.ERROR:
         eventCounts.errorCount += 1
-        callback(eventCounts)
+        callback()
         break
       case RumEventType.ACTION:
-        eventCounts.userActionCount += 1
-        callback(eventCounts)
+        eventCounts.actionCount += 1
+        if (event.action.frustration) {
+          eventCounts.frustrationCount += event.action.frustration.type.length
+        }
+        callback()
         break
       case RumEventType.LONG_TASK:
         eventCounts.longTaskCount += 1
-        callback(eventCounts)
+        callback()
         break
       case RumEventType.RESOURCE:
         eventCounts.resourceCount += 1
-        callback(eventCounts)
+        callback()
         break
     }
   })

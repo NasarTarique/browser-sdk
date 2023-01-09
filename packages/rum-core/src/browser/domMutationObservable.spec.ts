@@ -1,5 +1,6 @@
 import { isIE } from '@datadog/browser-core'
-import { createDOMMutationObservable } from './domMutationObservable'
+import { stubZoneJs } from '../../../core/test/stubZoneJs'
+import { createDOMMutationObservable, getMutationObserverConstructor } from './domMutationObservable'
 
 // The MutationObserver invokes its callback in an event loop microtask, making this asynchronous.
 // We want to wait for a few event loop executions to potentially collect multiple mutation events.
@@ -105,4 +106,33 @@ describe('domMutationObservable', () => {
       { expectedMutations: 1 }
     )
   )
+
+  describe('Zone.js support', () => {
+    let zoneJsStub: ReturnType<typeof stubZoneJs>
+    const OriginalMutationObserverConstructor = window.MutationObserver
+
+    beforeEach(() => {
+      zoneJsStub = stubZoneJs()
+    })
+
+    afterEach(() => {
+      zoneJsStub.restore()
+      window.MutationObserver = OriginalMutationObserverConstructor
+    })
+
+    it('gets the original MutationObserver constructor from the "window" object (Zone.js >= 0.8.6)', () => {
+      zoneJsStub.replaceProperty(window, 'MutationObserver', function () {
+        // This won't be instantiated.
+      } as any)
+      expect(getMutationObserverConstructor()).toBe(OriginalMutationObserverConstructor)
+    })
+
+    it('gets the original MutationObserver constructor from a patched instance (Zone.js < 0.8.6)', () => {
+      window.MutationObserver = function (this: any, callback: () => void) {
+        this[zoneJsStub.getSymbol('originalInstance')] = new OriginalMutationObserverConstructor(callback)
+      } as any
+
+      expect(getMutationObserverConstructor()).toBe(OriginalMutationObserverConstructor)
+    })
+  })
 })

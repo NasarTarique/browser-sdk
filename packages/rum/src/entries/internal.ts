@@ -5,22 +5,7 @@
  * WARNING: this module is not intended for public usages, and won't follow semver for breaking
  * changes.
  */
-export {
-  MutationData,
-  MousemoveData,
-  MouseInteractionData,
-  ScrollData,
-  ViewportResizeData,
-  InputData,
-  MediaInteractionData,
-  StyleSheetRuleData,
-  MediaInteractions,
-  MouseInteractions,
-  AddedNodeMutation,
-  MousePosition,
-  RemovedNodeMutation,
-} from '../domain/record'
-
+export type { TimeStamp } from '@datadog/browser-core'
 export { PRIVACY_ATTR_NAME, PRIVACY_ATTR_VALUE_HIDDEN, PRIVACY_CLASS_HIDDEN, NodePrivacyLevel } from '../constants'
 
 export * from '../types'

@@ -1,7 +1,8 @@
-import { Duration, RelativeTime, ServerDuration } from '@datadog/browser-core'
+import type { Duration, RelativeTime, ServerDuration } from '@datadog/browser-core'
 import { SPEC_ENDPOINTS } from '../../../../../core/test/specHelper'
-import { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
-import { RumConfiguration, validateAndBuildRumConfiguration } from '../../configuration'
+import type { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
+import type { RumConfiguration } from '../../configuration'
+import { validateAndBuildRumConfiguration } from '../../configuration'
 import {
   computePerformanceResourceDetails,
   computePerformanceResourceDuration,
@@ -291,10 +292,14 @@ describe('computePerformanceResourceDuration', () => {
 })
 
 describe('shouldTrackResource', () => {
-  const configuration: RumConfiguration = {
-    ...validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
-    ...SPEC_ENDPOINTS,
-  }
+  let configuration: RumConfiguration
+
+  beforeEach(() => {
+    configuration = {
+      ...validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
+      ...SPEC_ENDPOINTS,
+    }
+  })
 
   it('should exclude requests on intakes endpoints', () => {
     expect(isAllowedRequestUrl(configuration, 'https://rum-intake.com/v1/input/abcde?foo=bar')).toBe(false)

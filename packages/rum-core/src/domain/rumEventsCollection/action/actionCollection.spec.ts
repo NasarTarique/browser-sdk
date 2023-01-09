@@ -1,6 +1,7 @@
-import { Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
+import type { Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
 import { createNewEvent } from '../../../../../core/test/specHelper'
-import { setup, TestSetupBuilder } from '../../../../test/specHelper'
+import type { TestSetupBuilder } from '../../../../test/specHelper'
+import { setup } from '../../../../test/specHelper'
 import { RumEventType, ActionType } from '../../../rawRumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
 import { startActionCollection } from './actionCollection'
@@ -24,19 +25,28 @@ describe('actionCollection', () => {
   })
   it('should create action from auto action', () => {
     const { lifeCycle, rawRumEvents } = setupBuilder.build()
-    const event = createNewEvent('click')
+
+    const event = createNewEvent('click', { target: document.createElement('button') })
     lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_COMPLETED, {
       counts: {
         errorCount: 10,
         longTaskCount: 10,
         resourceCount: 10,
       },
+      frustrationTypes: [],
       duration: 100 as Duration,
       id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       name: 'foo',
       startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
       type: ActionType.CLICK,
       event,
+      target: {
+        selector: '#foo',
+        width: 1,
+        height: 2,
+      },
+      position: { x: 1, y: 2 },
+      events: [event],
     })
 
     expect(rawRumEvents[0].startTime).toBe(1234 as RelativeTime)
@@ -47,6 +57,9 @@ describe('actionCollection', () => {
         },
         id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
         loading_time: (100 * 1e6) as ServerDuration,
+        frustration: {
+          type: [],
+        },
         long_task: {
           count: 10,
         },
@@ -63,9 +76,23 @@ describe('actionCollection', () => {
       view: {
         in_foreground: true,
       },
+      _dd: {
+        action: {
+          target: {
+            selector: '#foo',
+            width: 1,
+            height: 2,
+          },
+          position: {
+            x: 1,
+            y: 2,
+          },
+        },
+      },
     })
     expect(rawRumEvents[0].domainContext).toEqual({
       event,
+      events: [event],
     })
   })
 

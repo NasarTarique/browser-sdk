@@ -1,38 +1,41 @@
+import type { Context, RawError, EventRateLimiter, User } from '@datadog/browser-core'
 import {
+  isExperimentalFeatureEnabled,
   combine,
-  Context,
   isEmptyObject,
   limitModification,
   timeStampNow,
   currentDrift,
   display,
-  RawError,
   createEventRateLimiter,
-  EventRateLimiter,
   canUseEventBridge,
 } from '@datadog/browser-core'
-import { RumEventDomainContext } from '../domainContext.types'
-import {
+import type { RumEventDomainContext } from '../domainContext.types'
+import type {
   CommonContext,
   RawRumErrorEvent,
   RawRumEvent,
   RawRumLongTaskEvent,
   RawRumResourceEvent,
   RumContext,
-  RumEventType,
-  User,
 } from '../rawRumEvent.types'
-import { RumEvent } from '../rumEvent.types'
-import { buildEnv } from '../boot/buildEnv'
-import { getSyntheticsContext } from './syntheticsContext'
-import { getCiTestContext } from './ciTestContext'
-import { LifeCycle, LifeCycleEventType } from './lifeCycle'
-import { ParentContexts } from './parentContexts'
-import { RumSessionManager, RumSessionPlan } from './rumSessionManager'
-import { UrlContexts } from './urlContexts'
-import { RumConfiguration } from './configuration'
+import { RumEventType } from '../rawRumEvent.types'
+import type { RumEvent } from '../rumEvent.types'
+import { getSyntheticsContext } from './contexts/syntheticsContext'
+import { getCiTestContext } from './contexts/ciTestContext'
+import type { LifeCycle } from './lifeCycle'
+import { LifeCycleEventType } from './lifeCycle'
+import type { ViewContexts } from './contexts/viewContexts'
+import type { RumSessionManager } from './rumSessionManager'
+import type { UrlContexts } from './contexts/urlContexts'
+import type { RumConfiguration } from './configuration'
+import type { ActionContexts } from './rumEventsCollection/action/actionCollection'
+import { getDisplayContext } from './contexts/displayContext'
 
-enum SessionType {
+// replaced at build time
+declare const __BUILD_ENV__SDK_VERSION__: string
+
+const enum SessionType {
   SYNTHETICS = 'synthetics',
   USER = 'user',
   CI_TEST = 'ci_test',
@@ -49,11 +52,10 @@ const VIEW_EVENTS_MODIFIABLE_FIELD_PATHS = [
   'resource.url',
 ]
 
-const OTHER_EVENTS_MODIFIABLE_FIELD_PATHS = [
-  ...VIEW_EVENTS_MODIFIABLE_FIELD_PATHS,
+const OTHER_EVENTS_MODIFIABLE_FIELD_PATHS = VIEW_EVENTS_MODIFIABLE_FIELD_PATHS.concat([
   // User-customizable field
   'context',
-]
+])
 
 type Mutable<T> = { -readonly [P in keyof T]: T[P] }
 
@@ -61,14 +63,12 @@ export function startRumAssembly(
   configuration: RumConfiguration,
   lifeCycle: LifeCycle,
   sessionManager: RumSessionManager,
-  parentContexts: ParentContexts,
+  viewContexts: ViewContexts,
   urlContexts: UrlContexts,
-  getCommonContext: () => CommonContext
+  actionContexts: ActionContexts,
+  getCommonContext: () => CommonContext,
+  reportError: (error: RawError) => void
 ) {
-  const reportError = (error: RawError) => {
-    lifeCycle.notify(LifeCycleEventType.RAW_ERROR_COLLECTED, { error })
-  }
-
   const eventRateLimiters = {
     [RumEventType.ERROR]: createEventRateLimiter(
       RumEventType.ERROR,
@@ -88,40 +88,49 @@ export function startRumAssembly(
   lifeCycle.subscribe(
     LifeCycleEventType.RAW_RUM_EVENT_COLLECTED,
     ({ startTime, rawRumEvent, domainContext, savedCommonContext, customerContext }) => {
-      const viewContext = parentContexts.findView(startTime)
+      const viewContext = viewContexts.findView(startTime)
       const urlContext = urlContexts.findUrl(startTime)
       // allow to send events if the session was tracked when they start
       // except for views which are continuously updated
       // TODO: stop sending view updates when session is expired
       const session = sessionManager.findTrackedSession(rawRumEvent.type !== RumEventType.VIEW ? startTime : undefined)
       if (session && viewContext && urlContext) {
-        const actionContext = parentContexts.findAction(startTime)
         const commonContext = savedCommonContext || getCommonContext()
+        const actionId = actionContexts.findActionId(startTime)
+
         const rumContext: RumContext = {
           _dd: {
             format_version: 2,
             drift: currentDrift(),
             session: {
-              plan: session.hasReplayPlan ? RumSessionPlan.REPLAY : RumSessionPlan.LITE,
+              plan: session.plan,
             },
-            browser_sdk_version: canUseEventBridge() ? buildEnv.sdkVersion : undefined,
+            browser_sdk_version: canUseEventBridge() ? __BUILD_ENV__SDK_VERSION__ : undefined,
           },
           application: {
             id: configuration.applicationId,
           },
           date: timeStampNow(),
-          service: configuration.service,
+          service: viewContext.service || configuration.service,
+          version: viewContext.version || configuration.version,
+          source: 'browser',
           session: {
             id: session.id,
             type: syntheticsContext ? SessionType.SYNTHETICS : ciTestContext ? SessionType.CI_TEST : SessionType.USER,
           },
+          view: {
+            id: viewContext.id,
+            name: viewContext.name,
+            url: urlContext.url,
+            referrer: urlContext.referrer,
+          },
+          action: needToAssembleWithAction(rawRumEvent) && actionId ? { id: actionId } : undefined,
           synthetics: syntheticsContext,
           ci_test: ciTestContext,
+          display: getDisplayContext(),
         }
-        const serverRumEvent = (needToAssembleWithAction(rawRumEvent)
-          ? combine(rumContext, urlContext, viewContext, actionContext, rawRumEvent)
-          : combine(rumContext, urlContext, viewContext, rawRumEvent)) as RumEvent & Context
 
+        const serverRumEvent = combine(rumContext as RumContext & Context, rawRumEvent) as RumEvent & Context
         serverRumEvent.context = combine(commonContext.context, customerContext)
 
         if (!('has_replay' in serverRumEvent.session)) {
@@ -130,6 +139,14 @@ export function startRumAssembly(
 
         if (!isEmptyObject(commonContext.user)) {
           ;(serverRumEvent.usr as Mutable<RumEvent['usr']>) = commonContext.user as User & Context
+        }
+
+        if (isExperimentalFeatureEnabled('report_view_document_version')) {
+          serverRumEvent.context._dd = {
+            view: {
+              document_version: viewContext.documentVersion,
+            },
+          }
         }
 
         if (shouldSend(serverRumEvent, configuration.beforeSend, domainContext, eventRateLimiters)) {

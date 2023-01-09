@@ -3,7 +3,7 @@
     "baseUrl": ".",
     "experimentalDecorators": true,
     "esModuleInterop": true,
-    "importHelpers": true,
+    "importHelpers": false,
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "strict": true,
@@ -12,12 +12,6 @@
 
     "types": [],
     "lib": ["ES2016", "DOM"],
-
-    "plugins": [
-      {
-        "name": "typescript-tslint-plugin"
-      }
-    ],
 
     "paths": {
       "@datadog/browser-core": ["./packages/core/src"],

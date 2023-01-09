@@ -1,15 +1,13 @@
-import { Clock, mockClock } from '../../../test/specHelper'
-import { CookieOptions, getCookie, setCookie, COOKIE_ACCESS_DELAY } from '../../browser/cookie'
-import { MonitoringMessage, startFakeInternalMonitoring, resetInternalMonitoring } from '../internalMonitoring'
-import {
-  startSessionStore,
-  SESSION_COOKIE_NAME,
-  SessionStore,
-  SESSION_EXPIRATION_DELAY,
-  SESSION_TIME_OUT_DELAY,
-} from './sessionStore'
+import type { Clock } from '../../../test/specHelper'
+import { mockClock } from '../../../test/specHelper'
+import type { CookieOptions } from '../../browser/cookie'
+import { getCookie, setCookie, COOKIE_ACCESS_DELAY } from '../../browser/cookie'
+import type { SessionStore } from './sessionStore'
+import { startSessionStore } from './sessionStore'
+import { SESSION_COOKIE_NAME } from './sessionCookieStore'
+import { SESSION_EXPIRATION_DELAY, SESSION_TIME_OUT_DELAY } from './sessionConstants'
 
-enum FakeTrackingType {
+const enum FakeTrackingType {
   TRACKED = 'tracked',
   NOT_TRACKED = 'not-tracked',
 }
@@ -36,7 +34,7 @@ function expectTrackedSessionToBeInStore(id?: string) {
 }
 
 function expectNotTrackedSessionToBeInStore() {
-  expect(getCookie(SESSION_COOKIE_NAME)).not.toContain(`id=`)
+  expect(getCookie(SESSION_COOKIE_NAME)).not.toContain('id=')
   expect(getCookie(SESSION_COOKIE_NAME)).toContain(`${PRODUCT_KEY}=${FakeTrackingType.NOT_TRACKED}`)
 }
 
@@ -284,16 +282,6 @@ describe('session store', () => {
   })
 
   describe('regular watch', () => {
-    let monitoringMessages: MonitoringMessage[]
-
-    beforeEach(() => {
-      monitoringMessages = startFakeInternalMonitoring()
-    })
-
-    afterEach(() => {
-      resetInternalMonitoring()
-    })
-
     it('when session not in cache and session not in store, should do nothing', () => {
       setupSessionStore()
 
@@ -301,7 +289,6 @@ describe('session store', () => {
 
       expect(sessionStore.getSession().id).toBeUndefined()
       expect(expireSpy).not.toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(0)
     })
 
     it('when session not in cache and session in store, should do nothing', () => {
@@ -312,7 +299,6 @@ describe('session store', () => {
 
       expect(sessionStore.getSession().id).toBeUndefined()
       expect(expireSpy).not.toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(0)
     })
 
     it('when session in cache and session not in store, should expire session', () => {
@@ -324,7 +310,6 @@ describe('session store', () => {
 
       expect(sessionStore.getSession().id).toBeUndefined()
       expect(expireSpy).toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(0)
     })
 
     it('when session in cache is same session than in store, should synchronize session', () => {
@@ -337,7 +322,6 @@ describe('session store', () => {
       expect(sessionStore.getSession().id).toBe(FIRST_ID)
       expect(sessionStore.getSession().expire).toBe(getStoreExpiration())
       expect(expireSpy).not.toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(0)
     })
 
     it('when session id in cache is different than session id in store, should expire session', () => {
@@ -349,7 +333,6 @@ describe('session store', () => {
 
       expect(sessionStore.getSession().id).toBeUndefined()
       expect(expireSpy).toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(1)
     })
 
     it('when session type in cache is different than session type in store, should expire session', () => {
@@ -361,7 +344,6 @@ describe('session store', () => {
 
       expect(sessionStore.getSession().id).toBeUndefined()
       expect(expireSpy).toHaveBeenCalled()
-      expect(monitoringMessages.length).toBe(1)
     })
   })
 })

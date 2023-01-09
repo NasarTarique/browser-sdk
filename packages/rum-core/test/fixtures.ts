@@ -1,17 +1,8 @@
-import {
-  combine,
-  Context,
-  Duration,
-  ErrorHandling,
-  ErrorSource,
-  generateUUID,
-  RelativeTime,
-  ResourceType,
-  ServerDuration,
-  TimeStamp,
-} from '@datadog/browser-core'
-import { RumPerformanceResourceTiming } from '../src/browser/performanceCollection'
-import { ActionType, RawRumEvent, RumEventType, ViewLoadingType } from '../src/rawRumEvent.types'
+import type { Context, Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
+import { combine, ErrorHandling, ErrorSource, generateUUID, ResourceType } from '@datadog/browser-core'
+import type { RumPerformanceResourceTiming } from '../src/browser/performanceCollection'
+import type { RawRumEvent } from '../src/rawRumEvent.types'
+import { ActionType, RumEventType, ViewLoadingType } from '../src/rawRumEvent.types'
 
 export function createRawRumEvent(type: RumEventType, overrides?: Context): RawRumEvent {
   switch (type) {
@@ -39,6 +30,9 @@ export function createRawRumEvent(type: RumEventType, overrides?: Context): RawR
             id: generateUUID(),
             duration: 0 as ServerDuration,
           },
+          _dd: {
+            discarded: false,
+          },
         },
         overrides
       )
@@ -52,6 +46,8 @@ export function createRawRumEvent(type: RumEventType, overrides?: Context): RawR
             message: 'oh snap',
             source: ErrorSource.SOURCE,
             handling: ErrorHandling.HANDLED,
+            source_type: 'browser',
+            causes: [],
           },
         },
         overrides
@@ -67,6 +63,9 @@ export function createRawRumEvent(type: RumEventType, overrides?: Context): RawR
             type: ResourceType.OTHER,
             url: 'http://foo.bar',
           },
+          _dd: {
+            discarded: false,
+          },
         },
         overrides
       )
@@ -81,6 +80,7 @@ export function createRawRumEvent(type: RumEventType, overrides?: Context): RawR
           view: {
             id: generateUUID(),
             action: { count: 0 },
+            frustration: { count: 0 },
             error: { count: 0 },
             is_active: true,
             loading_type: ViewLoadingType.INITIAL_LOAD,

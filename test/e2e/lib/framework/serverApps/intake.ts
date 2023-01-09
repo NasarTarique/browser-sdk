@@ -1,10 +1,11 @@
 import { createInflate } from 'zlib'
+import https from 'https'
 import connectBusboy from 'connect-busboy'
 import express from 'express'
 
 import cors from 'cors'
-import { SegmentFile, SessionReplayCall } from '../../types/serverEvents'
-import { EventRegistry } from '../eventsRegistry'
+import type { SegmentFile } from '../../types/serverEvents'
+import type { EventRegistry, IntakeType } from '../eventsRegistry'
 
 export function createIntakeServerApp(serverEvents: EventRegistry, bridgeEvents: EventRegistry) {
   const app = express()
@@ -13,51 +14,140 @@ export function createIntakeServerApp(serverEvents: EventRegistry, bridgeEvents:
   app.use(express.text())
   app.use(connectBusboy({ immediate: true }))
 
-  app.post('/v1/input/:endpoint', async (req, res) => {
-    const endpoint = req.params.endpoint
-    const isBridge = req.query.bridge
+  app.post('/', (async (req, res) => {
+    const { isBridge, intakeType } = computeIntakeType(req)
     const events = isBridge ? bridgeEvents : serverEvents
 
-    if (endpoint === 'rum' || endpoint === 'logs' || endpoint === 'internalMonitoring') {
-      ;(req.body as string).split('\n').map((rawEvent) => events.push(endpoint, JSON.parse(rawEvent)))
+    try {
+      if (intakeType === 'sessionReplay') {
+        await Promise.all([storeReplayData(req, events), forwardReplayToIntake(req)])
+      } else {
+        storeEventsData(events, intakeType, req.body as string)
+        if (!isBridge) {
+          await forwardEventsToIntake(req)
+        }
+      }
+    } catch (error) {
+      console.error(`Error while processing request: ${String(error)}`)
     }
-
-    if (endpoint === 'sessionReplay' && req.busboy) {
-      events.push('sessionReplay', await readSessionReplay(req))
-    }
-
     res.end()
-  })
+  }) as express.RequestHandler)
 
   return app
 }
 
-async function readSessionReplay(req: express.Request): Promise<SessionReplayCall> {
+function computeIntakeType(
+  req: express.Request
+): { isBridge: true; intakeType: 'logs' | 'rum' } | { isBridge: false; intakeType: IntakeType } {
+  const ddforward = req.query.ddforward as string | undefined
+  if (!ddforward) {
+    throw new Error('ddforward is missing')
+  }
+
+  if (ddforward === 'bridge') {
+    const eventType = req.query.event_type
+    return {
+      isBridge: true,
+      intakeType: eventType === 'log' ? 'logs' : 'rum',
+    }
+  }
+
+  let intakeType: IntakeType
+  const forwardUrl = new URL(ddforward)
+  const endpoint = forwardUrl.pathname.split('/').pop()
+  if (endpoint === 'logs' || endpoint === 'rum') {
+    intakeType = endpoint
+  } else if (endpoint === 'replay' && req.busboy) {
+    intakeType = 'sessionReplay'
+  } else {
+    throw new Error("Can't find intake type")
+  }
+  return {
+    isBridge: false,
+    intakeType,
+  }
+}
+
+function storeEventsData(events: EventRegistry, intakeType: 'logs' | 'rum' | 'telemetry', data: string) {
+  data.split('\n').map((rawEvent) => {
+    const event = JSON.parse(rawEvent)
+    if (intakeType === 'rum' && event.type === 'telemetry') {
+      events.push('telemetry', event)
+    } else {
+      events.push(intakeType, event)
+    }
+  })
+}
+
+function forwardEventsToIntake(req: express.Request): Promise<any> {
   return new Promise((resolve, reject) => {
-    const meta: {
+    const intakeRequest = prepareIntakeRequest(req)
+    intakeRequest.on('response', resolve)
+    intakeRequest.on('error', reject)
+    // can't directly pipe the request since
+    // the stream has already been read by express body parser
+    intakeRequest.write(req.body)
+    intakeRequest.end()
+  })
+}
+
+async function storeReplayData(req: express.Request, events: EventRegistry): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const metadata: {
       [field: string]: string
     } = {}
     let segmentPromise: Promise<SegmentFile>
 
-    req.busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-      if (fieldname === 'segment') {
-        segmentPromise = readStream(file.pipe(createInflate())).then((data) => ({
+    req.busboy.on('file', (name, stream, info) => {
+      const { filename, encoding, mimeType } = info
+      if (name === 'segment') {
+        segmentPromise = readStream(stream.pipe(createInflate())).then((data) => ({
           encoding,
           filename,
-          mimetype,
+          mimetype: mimeType,
           data: JSON.parse(data.toString()),
         }))
       }
     })
 
     req.busboy.on('field', (key: string, value: string) => {
-      meta[key] = value
+      metadata[key] = value
     })
 
     req.busboy.on('finish', () => {
-      segmentPromise.then((segment) => resolve({ meta, segment })).catch((e) => reject(e))
+      segmentPromise
+        .then((segment) => {
+          events.push('sessionReplay', { metadata, segment })
+        })
+        .then(resolve)
+        .catch((e) => reject(e))
     })
   })
+}
+
+async function forwardReplayToIntake(req: express.Request): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const intakeRequest = prepareIntakeRequest(req)
+    req.pipe(intakeRequest)
+    intakeRequest.on('response', resolve)
+    intakeRequest.on('error', reject)
+  })
+}
+
+function prepareIntakeRequest(req: express.Request) {
+  const ddforward = req.query.ddforward! as string
+  if (!/^https:\/\/(session-replay|rum|logs)\.browser-intake-datadoghq\.com\//.test(ddforward)) {
+    throw new Error(`Unsupported ddforward: ${ddforward}`)
+  }
+  const options = {
+    method: 'POST',
+    headers: {
+      'X-Forwarded-For': req.socket.remoteAddress,
+      'Content-Type': req.headers['content-type'],
+      'User-Agent': req.headers['user-agent'],
+    },
+  }
+  return https.request(ddforward, options)
 }
 
 async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {

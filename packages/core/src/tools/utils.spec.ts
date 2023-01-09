@@ -1,14 +1,21 @@
-import { Clock, mockClock } from '../../test/specHelper'
+import type { Clock } from '../../test/specHelper'
+import { mockClock } from '../../test/specHelper'
+import { display } from './display'
 import {
+  arrayFrom,
   combine,
+  cssEscape,
   deepClone,
+  elementMatches,
   findCommaSeparatedValue,
   getType,
   jsonStringify,
+  matchList,
   mergeInto,
   performDraw,
   round,
   safeTruncate,
+  startsWith,
   throttle,
 } from './utils'
 
@@ -242,8 +249,13 @@ describe('utils', () => {
   })
 
   describe('jsonStringify', () => {
-    it('should jsonStringify an object with toJSON directly defined', () => {
-      const value = [{ 1: 'a' }]
+    afterEach(() => {
+      delete (Array.prototype as any).toJSON
+      delete (Object.prototype as any).toJSON
+    })
+
+    it('should jsonStringify a value with toJSON directly defined', () => {
+      const value = { 1: 'a' }
       const expectedJson = JSON.stringify(value)
 
       expect(jsonStringify(value)).toEqual(expectedJson)
@@ -252,16 +264,41 @@ describe('utils', () => {
       expect(JSON.stringify(value)).toEqual('"42"')
     })
 
-    it('should jsonStringify an object with toJSON defined on prototype', () => {
-      const value = [{ 2: 'b' }]
+    it('should jsonStringify a value with toJSON defined on its prototype', () => {
+      const value = createSampleClassInstance()
+      const expectedJson = JSON.stringify(value)
+
+      expect(jsonStringify(value)).toEqual(expectedJson)
+      Object.getPrototypeOf(value).toJSON = () => '42'
+      expect(jsonStringify(value)).toEqual(expectedJson)
+      expect(JSON.stringify(value)).toEqual('"42"')
+    })
+
+    it('should jsonStringify a value when toJSON is defined on Object prototype', () => {
+      const value = createSampleClassInstance()
+      const expectedJson = JSON.stringify(value)
+
+      expect(jsonStringify(value)).toEqual(expectedJson)
+      ;(Object.prototype as any).toJSON = () => '42'
+      expect(jsonStringify(value)).toEqual(expectedJson)
+      expect(JSON.stringify(value)).toEqual('"42"')
+    })
+
+    it('should jsonStringify a value when toJSON is defined on Array prototype', () => {
+      const value = createSampleClassInstance([1])
       const expectedJson = JSON.stringify(value)
 
       expect(jsonStringify(value)).toEqual(expectedJson)
       ;(Array.prototype as any).toJSON = () => '42'
       expect(jsonStringify(value)).toEqual(expectedJson)
-      expect(JSON.stringify(value)).toEqual('"42"')
+      expect(JSON.stringify(value)).toEqual('{"value":"42"}')
+    })
 
-      delete (Array.prototype as any).toJSON
+    it('should not restore the toJSON method on the wrong prototype', () => {
+      const value = [{ 1: 'a' }]
+      ;(Object.prototype as any).toJSON = () => '42'
+      jsonStringify(value)
+      expect(Object.prototype.hasOwnProperty.call(Array.prototype, 'toJSON')).toBe(false)
     })
 
     it('should jsonStringify edge cases', () => {
@@ -277,6 +314,13 @@ describe('utils', () => {
 
       expect(jsonStringify(circularReference)).toEqual('<error: unable to serialize object>')
     })
+
+    function createSampleClassInstance(value: any = 'value') {
+      class Foo {
+        value = value
+      }
+      return new Foo()
+    }
   })
 
   describe('safeTruncate', () => {
@@ -290,6 +334,16 @@ describe('utils', () => {
       const truncated = safeTruncate('12345😎890', 6)
       expect(truncated.length).toBe(7)
       expect(truncated).toBe('12345😎')
+    })
+
+    it('should add the suffix when the string is truncated', () => {
+      const truncated = safeTruncate('12345😎890', 6, '...')
+      expect(truncated).toBe('12345😎...')
+    })
+
+    it('should not add the suffix when the string is not truncated', () => {
+      const truncated = safeTruncate('1234😎', 5, '...')
+      expect(truncated).toBe('1234😎')
     })
   })
 
@@ -545,5 +599,93 @@ describe('deepClone', () => {
 
     expect(clonedB).not.toEqual(b)
     expect(clonedB.ref.ref).toBeUndefined()
+  })
+})
+
+describe('startWith', () => {
+  it('should return true if the candidate does not start with the searched string', () => {
+    expect(startsWith('foobar', 'foo')).toEqual(true)
+  })
+
+  it('should return false if the candidate does not start with the searched string', () => {
+    expect(startsWith('barfoo', 'foo')).toEqual(false)
+  })
+})
+
+describe('cssEscape', () => {
+  it('should escape a string', () => {
+    expect(cssEscape('.foo#bar')).toEqual('\\.foo\\#bar')
+    expect(cssEscape('()[]{}')).toEqual('\\(\\)\\[\\]\\{\\}')
+    expect(cssEscape('--a')).toEqual('--a')
+    expect(cssEscape('\0')).toEqual('\ufffd')
+  })
+})
+
+describe('elementMatches', () => {
+  it('should return true if the element matches the selector', () => {
+    const element = document.createElement('div')
+    element.classList.add('foo')
+    expect(elementMatches(element, '.foo')).toEqual(true)
+  })
+
+  it('should return false if the element does not match the selector', () => {
+    const element = document.createElement('div')
+    element.classList.add('bar')
+    expect(elementMatches(element, '.foo')).toEqual(false)
+  })
+})
+
+describe('arrayFrom', () => {
+  it('should return an array from a Set', () => {
+    const set = new Set()
+    set.add('foo')
+
+    expect(arrayFrom(set)).toEqual(['foo'])
+  })
+
+  it('should return an array from a array like object', () => {
+    const div = document.createElement('div')
+    div.classList.add('foo')
+
+    expect(arrayFrom(div.classList)).toEqual(['foo'])
+  })
+})
+
+describe('matchList', () => {
+  it('should match exact value', () => {
+    const list = ['foo', 'bar']
+    expect(matchList(list, 'foo')).toBe(true)
+    expect(matchList(list, 'bar')).toBe(true)
+    expect(matchList(list, 'qux')).toBe(false)
+  })
+
+  it('should match regexp', () => {
+    const list = [/^foo/, /foo$/]
+    expect(matchList(list, 'foobar')).toBe(true)
+    expect(matchList(list, 'barfoo')).toBe(true)
+    expect(matchList(list, 'barqux')).toBe(false)
+  })
+
+  it('should match function', () => {
+    const list = [(value: string) => value === 'foo', (value: string) => value === 'bar']
+    expect(matchList(list, 'foo')).toBe(true)
+    expect(matchList(list, 'bar')).toBe(true)
+    expect(matchList(list, 'qux')).toBe(false)
+  })
+
+  it('should compare strings using startsWith when enabling the option', () => {
+    const list = ['http://my.domain.com']
+    expect(matchList(list, 'http://my.domain.com/action', true)).toBe(true)
+  })
+
+  it('should catch error from provided function', () => {
+    spyOn(display, 'error')
+    const list = [
+      (_: string) => {
+        throw new Error('oops')
+      },
+    ]
+    expect(matchList(list, 'foo')).toBe(false)
+    expect(display.error).toHaveBeenCalled()
   })
 })

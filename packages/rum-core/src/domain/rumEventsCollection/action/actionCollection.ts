@@ -1,9 +1,25 @@
-import { combine, toServerDuration, generateUUID, Observable } from '@datadog/browser-core'
-import { ActionType, CommonContext, RumEventType, RawRumActionEvent } from '../../../rawRumEvent.types'
-import { LifeCycle, LifeCycleEventType, RawRumEventCollectedData } from '../../lifeCycle'
-import { ForegroundContexts } from '../../foregroundContexts'
-import { RumConfiguration } from '../../configuration'
-import { AutoAction, CustomAction, trackActions } from './trackActions'
+import type { ClocksState, Context, Observable } from '@datadog/browser-core'
+import { noop, assign, combine, toServerDuration, generateUUID } from '@datadog/browser-core'
+
+import type { CommonContext, RawRumActionEvent } from '../../../rawRumEvent.types'
+import { ActionType, RumEventType } from '../../../rawRumEvent.types'
+import type { LifeCycle, RawRumEventCollectedData } from '../../lifeCycle'
+import { LifeCycleEventType } from '../../lifeCycle'
+import type { ForegroundContexts } from '../../contexts/foregroundContexts'
+import type { RumConfiguration } from '../../configuration'
+import type { ActionContexts, ClickAction } from './trackClickActions'
+import { trackClickActions } from './trackClickActions'
+
+export type { ActionContexts }
+
+export interface CustomAction {
+  type: ActionType.CUSTOM
+  name: string
+  startClocks: ClocksState
+  context?: Context
+}
+
+export type AutoAction = ClickAction
 
 export function startActionCollection(
   lifeCycle: LifeCycle,
@@ -15,17 +31,24 @@ export function startActionCollection(
     lifeCycle.notify(LifeCycleEventType.RAW_RUM_EVENT_COLLECTED, processAction(action, foregroundContexts))
   )
 
-  if (configuration.trackInteractions) {
-    trackActions(lifeCycle, domMutationObservable, configuration)
+  let actionContexts: ActionContexts = { findActionId: noop as () => undefined }
+  if (configuration.trackUserInteractions) {
+    actionContexts = trackClickActions(lifeCycle, domMutationObservable, configuration).actionContexts
   }
 
   return {
     addAction: (action: CustomAction, savedCommonContext?: CommonContext) => {
-      lifeCycle.notify(LifeCycleEventType.RAW_RUM_EVENT_COLLECTED, {
-        savedCommonContext,
-        ...processAction(action, foregroundContexts),
-      })
+      lifeCycle.notify(
+        LifeCycleEventType.RAW_RUM_EVENT_COLLECTED,
+        assign(
+          {
+            savedCommonContext,
+          },
+          processAction(action, foregroundContexts)
+        )
+      )
     },
+    actionContexts,
   }
 }
 
@@ -36,16 +59,25 @@ function processAction(
   const autoActionProperties = isAutoAction(action)
     ? {
         action: {
+          id: action.id,
+          loading_time: toServerDuration(action.duration),
+          frustration: {
+            type: action.frustrationTypes,
+          },
           error: {
             count: action.counts.errorCount,
           },
-          id: action.id,
-          loading_time: toServerDuration(action.duration),
           long_task: {
             count: action.counts.longTaskCount,
           },
           resource: {
             count: action.counts.resourceCount,
+          },
+        },
+        _dd: {
+          action: {
+            target: action.target,
+            position: action.position,
           },
         },
       }
@@ -73,7 +105,7 @@ function processAction(
     customerContext,
     rawRumEvent: actionEvent,
     startTime: action.startClocks.relative,
-    domainContext: isAutoAction(action) ? { event: action.event } : {},
+    domainContext: isAutoAction(action) ? { event: action.event, events: action.events } : {},
   }
 }
 

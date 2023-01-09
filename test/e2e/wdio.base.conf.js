@@ -1,8 +1,10 @@
 const path = require('path')
 const { unlinkSync, mkdirSync } = require('fs')
+const { getRunId } = require('../utils')
 const getTestReportDirectory = require('../getTestReportDirectory')
+const { APPLICATION_ID } = require('./lib/helpers/constants')
 
-const reporters = ['spec']
+const reporters = [['spec', { onlyFailures: true }]]
 let logsPath
 
 const testReportDirectory = getTestReportDirectory()
@@ -31,11 +33,24 @@ module.exports = {
   connectionRetryCount: 0,
   framework: 'jasmine',
   reporters,
-  jasmineNodeOpts: {
+  jasmineOpts: {
     defaultTimeoutInterval: 60000,
-    requires: [path.resolve(__dirname, './tsNode')],
+  },
+  autoCompileOpts: {
+    tsNodeOpts: {
+      transpileOnly: false,
+      files: true,
+      project: 'test/e2e/tsconfig.json',
+    },
   },
   onPrepare() {
+    console.log(
+      `[RUM events] https://app.datadoghq.com/rum/explorer?query=${encodeURIComponent(
+        `@application.id:${APPLICATION_ID} @context.run_id:"${getRunId()}"`
+      )}`
+    )
+    console.log(`[Log events] https://app.datadoghq.com/logs?query=${encodeURIComponent(`@run_id:"${getRunId()}"`)}\n`)
+
     if (testReportDirectory) {
       try {
         mkdirSync(testReportDirectory, { recursive: true })

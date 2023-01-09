@@ -1,6 +1,5 @@
-import { flushEvents } from '../../lib/helpers/flushEvents'
-import { createTest, html } from '../../lib/framework'
-import { browserExecute, sendXhr } from '../../lib/helpers/browser'
+import { createTest, flushEvents, html } from '../../lib/framework'
+import { browserExecute, getBrowserName, sendXhr } from '../../lib/helpers/browser'
 import { expireSession, renewSession } from '../../lib/helpers/session'
 
 describe('rum views', () => {
@@ -10,6 +9,7 @@ describe('rum views', () => {
       await flushEvents()
       const viewEvent = serverEvents.rumViews[0]
       expect(viewEvent).toBeDefined()
+      expect(viewEvent.view.first_byte).toBeGreaterThan(0)
       expect(viewEvent.view.dom_complete).toBeGreaterThan(0)
       expect(viewEvent.view.dom_content_loaded).toBeGreaterThan(0)
       expect(viewEvent.view.dom_interactive).toBeGreaterThan(0)
@@ -19,7 +19,7 @@ describe('rum views', () => {
   // When run via WebDriver, Safari 12 and 13 (at least) have an issue with `event.timeStamp`,
   // so the 'first-input' polyfill is ignoring it and doesn't send a performance entry.
   // See https://bugs.webkit.org/show_bug.cgi?id=211101
-  if (browser.capabilities.browserName !== 'Safari 12.0') {
+  if (getBrowserName() !== 'safari') {
     createTest('send performance first input delay')
       .withRum()
       .withBody(html` <button>Hop</button> `)
@@ -52,7 +52,7 @@ describe('rum views', () => {
     .run(async ({ serverEvents }) => {
       await expireSession()
       serverEvents.empty()
-      await sendXhr(`/ok`)
+      await sendXhr('/ok')
       expect(serverEvents.count).toBe(0)
     })
 

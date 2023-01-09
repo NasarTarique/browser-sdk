@@ -1,13 +1,24 @@
-import { Duration, RelativeTime, timeStampNow, display, relativeToClocks, relativeNow } from '@datadog/browser-core'
-import { setup, TestSetupBuilder, setupViewTest, ViewTest } from '../../../../test/specHelper'
+import type { Context, Duration, RelativeTime } from '@datadog/browser-core'
 import {
+  PageExitReason,
+  timeStampNow,
+  display,
+  relativeToClocks,
+  relativeNow,
+  resetExperimentalFeatures,
+} from '@datadog/browser-core'
+import type { TestSetupBuilder, ViewTest } from '../../../../test/specHelper'
+import { setup, setupViewTest } from '../../../../test/specHelper'
+import type {
   RumLargestContentfulPaintTiming,
   RumPerformanceNavigationTiming,
   RumPerformancePaintTiming,
 } from '../../../browser/performanceCollection'
-import { ViewLoadingType } from '../../../rawRumEvent.types'
+import { RumEventType, ViewLoadingType } from '../../../rawRumEvent.types'
+import type { RumEvent } from '../../../rumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
-import { THROTTLE_VIEW_UPDATE_PERIOD, ViewEvent } from './trackViews'
+import type { ViewEvent } from './trackViews'
+import { THROTTLE_VIEW_UPDATE_PERIOD } from './trackViews'
 
 const FAKE_PAINT_ENTRY: RumPerformancePaintTiming = {
   entryType: 'paint',
@@ -20,6 +31,7 @@ const FAKE_LARGEST_CONTENTFUL_PAINT_ENTRY: RumLargestContentfulPaintTiming = {
   size: 10,
 }
 const FAKE_NAVIGATION_ENTRY: RumPerformanceNavigationTiming = {
+  responseStart: 123 as RelativeTime,
   domComplete: 456 as RelativeTime,
   domContentLoadedEventEnd: 345 as RelativeTime,
   domInteractive: 234 as RelativeTime,
@@ -68,7 +80,7 @@ describe('track views automatically', () => {
     })
 
     function mockGetElementById() {
-      const fakeGetElementById = (elementId: string) => ((elementId === 'testHashValue') as any) as HTMLElement
+      const fakeGetElementById = (elementId: string) => (elementId === 'testHashValue') as any as HTMLElement
       return spyOn(document, 'getElementById').and.callFake(fakeGetElementById)
     }
 
@@ -105,7 +117,7 @@ describe('initial view', () => {
 
   beforeEach(() => {
     setupBuilder = setup().beforeBuild((buildContext) => {
-      viewTest = setupViewTest(buildContext, 'initial view name')
+      viewTest = setupViewTest(buildContext, { name: 'initial view name' })
       return viewTest
     })
   })
@@ -130,7 +142,8 @@ describe('initial view', () => {
       expect(getViewUpdateCount()).toEqual(1)
       expect(getViewUpdate(0).timings).toEqual({})
 
-      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_NAVIGATION_ENTRY)
+      clock.tick(FAKE_NAVIGATION_ENTRY.responseStart) // ensure now > responseStart
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [FAKE_NAVIGATION_ENTRY])
 
       expect(getViewUpdateCount()).toEqual(1)
 
@@ -138,6 +151,7 @@ describe('initial view', () => {
 
       expect(getViewUpdateCount()).toEqual(2)
       expect(getViewUpdate(1).timings).toEqual({
+        firstByte: 123 as Duration,
         domComplete: 456 as Duration,
         domContentLoaded: 345 as Duration,
         domInteractive: 234 as Duration,
@@ -152,15 +166,18 @@ describe('initial view', () => {
       expect(getViewUpdateCount()).toEqual(1)
       expect(getViewUpdate(0).timings).toEqual({})
 
-      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_PAINT_ENTRY)
-      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_LARGEST_CONTENTFUL_PAINT_ENTRY)
-      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_NAVIGATION_ENTRY)
+      lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [
+        FAKE_PAINT_ENTRY,
+        FAKE_LARGEST_CONTENTFUL_PAINT_ENTRY,
+        FAKE_NAVIGATION_ENTRY,
+      ])
       expect(getViewUpdateCount()).toEqual(1)
 
       startView()
 
       expect(getViewUpdateCount()).toEqual(3)
       expect(getViewUpdate(1).timings).toEqual({
+        firstByte: 123 as Duration,
         domComplete: 456 as Duration,
         domContentLoaded: 345 as Duration,
         domInteractive: 234 as Duration,
@@ -190,9 +207,11 @@ describe('initial view', () => {
 
         expect(getViewUpdateCount()).toEqual(3)
 
-        lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_PAINT_ENTRY)
-        lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_LARGEST_CONTENTFUL_PAINT_ENTRY)
-        lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_NAVIGATION_ENTRY)
+        lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [
+          FAKE_PAINT_ENTRY,
+          FAKE_LARGEST_CONTENTFUL_PAINT_ENTRY,
+          FAKE_NAVIGATION_ENTRY,
+        ])
 
         clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
@@ -215,6 +234,7 @@ describe('initial view', () => {
 
       it('should set timings only on the initial view', () => {
         expect(initialView.last.timings).toEqual({
+          firstByte: 123 as Duration,
           domComplete: 456 as Duration,
           domContentLoaded: 345 as Duration,
           domInteractive: 234 as Duration,
@@ -244,7 +264,11 @@ describe('renew session', () => {
     setupBuilder = setup()
       .withFakeLocation('/foo')
       .beforeBuild((buildContext) => {
-        viewTest = setupViewTest(buildContext, 'initial view name')
+        viewTest = setupViewTest(buildContext, {
+          name: 'initial view name',
+          service: 'initial service',
+          version: 'initial version',
+        })
         return viewTest
       })
   })
@@ -264,32 +288,79 @@ describe('renew session', () => {
     expect(getViewCreateCount()).toBe(2)
   })
 
-  it('should use the current view name for the new view', () => {
+  it('should use the current view name, service and version for the new view', () => {
     const { lifeCycle, changeLocation } = setupBuilder.build()
     const { getViewCreateCount, getViewCreate, startView } = viewTest
 
     lifeCycle.notify(LifeCycleEventType.SESSION_RENEWED)
 
-    startView('foo')
-    startView('bar')
+    startView({ name: 'view 1', service: 'service 1', version: 'version 1' })
+    startView({ name: 'view 2', service: 'service 2', version: 'version 2' })
     lifeCycle.notify(LifeCycleEventType.SESSION_RENEWED)
 
-    startView('qux')
+    startView({ name: 'view 3', service: 'service 3', version: 'version 3' })
     changeLocation('/bar')
     lifeCycle.notify(LifeCycleEventType.SESSION_RENEWED)
 
     expect(getViewCreateCount()).toBe(8)
 
-    expect(getViewCreate(0).name).toBe('initial view name')
-    expect(getViewCreate(1).name).toBe('initial view name')
-
-    expect(getViewCreate(2).name).toBe('foo')
-    expect(getViewCreate(3).name).toBe('bar')
-    expect(getViewCreate(4).name).toBe('bar')
-
-    expect(getViewCreate(5).name).toBe('qux')
-    expect(getViewCreate(6).name).toBeUndefined()
-    expect(getViewCreate(7).name).toBeUndefined()
+    expect(getViewCreate(0)).toEqual(
+      jasmine.objectContaining({
+        name: 'initial view name',
+        service: 'initial service',
+        version: 'initial version',
+      })
+    )
+    expect(getViewCreate(1)).toEqual(
+      jasmine.objectContaining({
+        name: 'initial view name',
+        service: 'initial service',
+        version: 'initial version',
+      })
+    )
+    expect(getViewCreate(2)).toEqual(
+      jasmine.objectContaining({
+        name: 'view 1',
+        service: 'service 1',
+        version: 'version 1',
+      })
+    )
+    expect(getViewCreate(3)).toEqual(
+      jasmine.objectContaining({
+        name: 'view 2',
+        service: 'service 2',
+        version: 'version 2',
+      })
+    )
+    expect(getViewCreate(4)).toEqual(
+      jasmine.objectContaining({
+        name: 'view 2',
+        service: 'service 2',
+        version: 'version 2',
+      })
+    )
+    expect(getViewCreate(5)).toEqual(
+      jasmine.objectContaining({
+        name: 'view 3',
+        service: 'service 3',
+        version: 'version 3',
+      })
+    )
+    expect(getViewCreate(6)).toEqual(
+      jasmine.objectContaining({
+        name: undefined,
+        service: undefined,
+        version: undefined,
+      })
+    )
+    expect(getViewCreate(7)).toEqual(
+      jasmine.objectContaining({
+        name: undefined,
+        service: undefined,
+        version: undefined,
+      })
+    )
+    resetExperimentalFeatures()
   })
 
   it('should not update the current view when the session is renewed', () => {
@@ -399,6 +470,8 @@ describe('view custom timings', () => {
     clock.tick(20)
     addTiming('foo')
 
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
     const view = getViewUpdate(3)
     expect(view.id).toEqual(currentViewId)
     expect(view.customTimings).toEqual({ foo: 20 as Duration })
@@ -414,7 +487,9 @@ describe('view custom timings', () => {
     clock.tick(10)
     addTiming('bar')
 
-    const view = getViewUpdate(2)
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
+    const view = getViewUpdate(1)
     expect(view.customTimings).toEqual({
       bar: 30 as Duration,
       foo: 20 as Duration,
@@ -431,7 +506,9 @@ describe('view custom timings', () => {
     clock.tick(10)
     addTiming('bar')
 
-    let view = getViewUpdate(2)
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
+    let view = getViewUpdate(1)
     expect(view.customTimings).toEqual({
       bar: 30 as Duration,
       foo: 20 as Duration,
@@ -440,10 +517,12 @@ describe('view custom timings', () => {
     clock.tick(20)
     addTiming('foo')
 
-    view = getViewUpdate(3)
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
+    view = getViewUpdate(2)
     expect(view.customTimings).toEqual({
       bar: 30 as Duration,
-      foo: 50 as Duration,
+      foo: (THROTTLE_VIEW_UPDATE_PERIOD + 50) as Duration,
     })
   })
 
@@ -453,6 +532,8 @@ describe('view custom timings', () => {
 
     clock.tick(1234)
     addTiming('foo', timeStampNow())
+
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
     expect(getViewUpdate(1).customTimings).toEqual({
       foo: 1234 as Duration,
@@ -465,6 +546,8 @@ describe('view custom timings', () => {
 
     clock.tick(1234)
     addTiming('foo', relativeNow())
+
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
     expect(getViewUpdate(1).customTimings).toEqual({
       foo: 1234 as Duration,
@@ -479,6 +562,8 @@ describe('view custom timings', () => {
 
     clock.tick(1234)
     addTiming('foo bar-qux.@zip_21%$*€👋', timeStampNow())
+
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
     expect(getViewUpdate(1).customTimings).toEqual({
       'foo_bar-qux.@zip_21_$____': 1234 as Duration,
@@ -529,12 +614,41 @@ describe('start view', () => {
     const { getViewUpdate, startView } = viewTest
 
     startView()
-    startView('foo')
-    startView('bar')
+    startView({ name: 'foo' })
+    startView({ name: 'bar' })
 
     expect(getViewUpdate(2).name).toBeUndefined()
     expect(getViewUpdate(4).name).toBe('foo')
     expect(getViewUpdate(6).name).toBe('bar')
+  })
+
+  it('should have service and version', () => {
+    setupBuilder.build()
+    const { getViewUpdate, startView } = viewTest
+
+    startView()
+    startView({ service: 'service 1', version: 'version 1' })
+    startView({ service: 'service 2', version: 'version 2' })
+
+    expect(getViewUpdate(2)).toEqual(
+      jasmine.objectContaining({
+        service: undefined,
+        version: undefined,
+      })
+    )
+    expect(getViewUpdate(4)).toEqual(
+      jasmine.objectContaining({
+        service: 'service 1',
+        version: 'version 1',
+      })
+    )
+    expect(getViewUpdate(6)).toEqual(
+      jasmine.objectContaining({
+        service: 'service 2',
+        version: 'version 2',
+      })
+    )
+    resetExperimentalFeatures()
   })
 
   it('should use the provided clock to stop the current view and start the new one', () => {
@@ -542,9 +656,59 @@ describe('start view', () => {
     const { getViewUpdate, startView } = viewTest
 
     clock.tick(100)
-    startView('foo', relativeToClocks(50 as RelativeTime))
+    startView({ name: 'foo' }, relativeToClocks(50 as RelativeTime))
 
     expect(getViewUpdate(1).duration).toBe(50 as Duration)
     expect(getViewUpdate(2).startClocks.relative).toBe(50 as RelativeTime)
   })
+})
+
+describe('view metrics', () => {
+  let setupBuilder: TestSetupBuilder
+  let viewTest: ViewTest
+
+  beforeEach(() => {
+    setupBuilder = setup()
+      .withFakeLocation('/foo')
+      .beforeBuild((buildContext) => {
+        viewTest = setupViewTest(buildContext)
+        return viewTest
+      })
+  })
+
+  afterEach(() => {
+    setupBuilder.cleanup()
+  })
+
+  it('includes event counts', () => {
+    const { lifeCycle, clock } = setupBuilder.withFakeClock().build()
+    const { getViewUpdate, getViewUpdateCount } = viewTest
+
+    lifeCycle.notify(LifeCycleEventType.RUM_EVENT_COLLECTED, createFakeActionEvent())
+
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
+    expect(getViewUpdate(getViewUpdateCount() - 1).eventCounts.actionCount).toBe(1)
+  })
+
+  it('takes child events occurring on view end into account', () => {
+    const { lifeCycle } = setupBuilder.build()
+    const { getViewUpdate, getViewUpdateCount } = viewTest
+
+    lifeCycle.subscribe(LifeCycleEventType.VIEW_ENDED, () => {
+      lifeCycle.notify(LifeCycleEventType.RUM_EVENT_COLLECTED, createFakeActionEvent())
+    })
+
+    lifeCycle.notify(LifeCycleEventType.PAGE_EXITED, { reason: PageExitReason.UNLOADING })
+
+    expect(getViewUpdate(getViewUpdateCount() - 1).eventCounts.actionCount).toBe(1)
+  })
+
+  function createFakeActionEvent() {
+    return {
+      type: RumEventType.ACTION,
+      action: {},
+      view: viewTest.getLatestViewContext(),
+    } as RumEvent & Context
+  }
 })

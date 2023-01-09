@@ -1,30 +1,41 @@
-import { LogsInitConfiguration } from '@datadog/browser-logs'
-import { RumInitConfiguration } from '@datadog/browser-rum-core'
-import { Servers } from './httpServers'
+import type { LogsInitConfiguration } from '@datadog/browser-logs'
+import type { RumInitConfiguration } from '@datadog/browser-rum-core'
+import type { Servers } from './httpServers'
 
 export interface SetupOptions {
   rum?: RumInitConfiguration
   useRumSlim: boolean
   logs?: LogsInitConfiguration
+  logsInit: (initConfiguration: LogsInitConfiguration) => void
   rumInit: (initConfiguration: RumInitConfiguration) => void
   eventBridge: boolean
   head?: string
   body?: string
+  context: {
+    run_id: string
+    test_name: string
+  }
 }
 
 export type SetupFactory = (options: SetupOptions, servers: Servers) => string
 
 const isBrowserStack =
+  'services' in browser.config &&
   browser.config.services &&
   browser.config.services.some((service) => (Array.isArray(service) ? service[0] : service) === 'browserstack')
 
-export const DEFAULT_SETUPS = isBrowserStack
-  ? [{ name: 'bundle', factory: bundleSetup }]
-  : [
-      { name: 'async', factory: asyncSetup },
-      { name: 'npm', factory: npmSetup },
-      { name: 'bundle', factory: bundleSetup },
-    ]
+const isContinuousIntegration = Boolean(process.env.CI_JOB_ID)
+
+// By default, run tests only with the 'bundle' setup outside of the CI (to run faster on the
+// developer laptop) or with Browser Stack (to limit flakiness).
+export const DEFAULT_SETUPS =
+  !isContinuousIntegration || isBrowserStack
+    ? [{ name: 'bundle', factory: bundleSetup }]
+    : [
+        { name: 'async', factory: asyncSetup },
+        { name: 'npm', factory: npmSetup },
+        { name: 'bundle', factory: bundleSetup },
+      ]
 
 export function asyncSetup(options: SetupOptions, servers: Servers) {
   let body = options.body || ''
@@ -47,7 +58,8 @@ n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
       <script>
         ${formatSnippet('./datadog-logs.js', 'DD_LOGS')}
         DD_LOGS.onReady(function () {
-          DD_LOGS.init(${formatLogsConfiguration(options.logs)})
+          DD_LOGS.setGlobalContext(${JSON.stringify(options.context)})
+          DD_LOGS.init(${formatConfiguration(options.logs, servers)})
         })
       </script>
     `
@@ -58,7 +70,8 @@ n=o.getElementsByTagName(u)[0];n.parentNode.insertBefore(d,n)
       <script type="text/javascript">
         ${formatSnippet(options.useRumSlim ? './datadog-rum-slim.js' : './datadog-rum.js', 'DD_RUM')}
         DD_RUM.onReady(function () {
-          ;(${options.rumInit.toString()})(${formatRumConfiguration(options.rum)})
+          DD_RUM.setGlobalContext(${JSON.stringify(options.context)})
+          ;(${options.rumInit.toString()})(${formatConfiguration(options.rum, servers)})
         })
       </script>
     `
@@ -81,7 +94,8 @@ export function bundleSetup(options: SetupOptions, servers: Servers) {
     header += html`
       <script type="text/javascript" src="./datadog-logs.js"></script>
       <script type="text/javascript">
-        DD_LOGS.init(${formatLogsConfiguration(options.logs)})
+        DD_LOGS.setGlobalContext(${JSON.stringify(options.context)})
+        DD_LOGS.init(${formatConfiguration(options.logs, servers)})
       </script>
     `
   }
@@ -93,7 +107,8 @@ export function bundleSetup(options: SetupOptions, servers: Servers) {
         src="${options.useRumSlim ? './datadog-rum-slim.js' : './datadog-rum.js'}"
       ></script>
       <script type="text/javascript">
-        ;(${options.rumInit.toString()})(${formatRumConfiguration(options.rum)})
+        DD_RUM.setGlobalContext(${JSON.stringify(options.context)})
+        ;(${options.rumInit.toString()})(${formatConfiguration(options.rum, servers)})
       </script>
     `
   }
@@ -114,7 +129,10 @@ export function npmSetup(options: SetupOptions, servers: Servers) {
   if (options.logs) {
     header += html`
       <script type="text/javascript">
-        window.LOGS_CONFIG = ${formatLogsConfiguration(options.logs)}
+        window.LOGS_INIT = () => {
+          window.DD_LOGS.setGlobalContext(${JSON.stringify(options.context)})
+          ;(${options.logsInit.toString()})(${formatConfiguration(options.logs, servers)})
+        }
       </script>
     `
   }
@@ -123,7 +141,8 @@ export function npmSetup(options: SetupOptions, servers: Servers) {
     header += html`
       <script type="text/javascript">
         window.RUM_INIT = () => {
-          ;(${options.rumInit.toString()})(${formatRumConfiguration(options.rum)})
+          window.DD_RUM.setGlobalContext(${JSON.stringify(options.context)})
+          ;(${options.rumInit.toString()})(${formatConfiguration(options.rum, servers)})
         }
       </script>
     `
@@ -168,18 +187,7 @@ function setupEventBridge(servers: Servers) {
         send(e) {
           const { eventType, event } = JSON.parse(e)
           const request = new XMLHttpRequest()
-          let endpoint
-          switch (eventType) {
-            case 'internal_log':
-              endpoint = 'internalMonitoring'
-              break
-            case 'log':
-              endpoint = 'logs'
-              break
-            default:
-              endpoint = 'rum'
-          }
-          request.open('POST', \`${servers.intake.url}/v1/input/\${endpoint}?bridge=1\`, true)
+          request.open('POST', \`${servers.intake.url}/?ddforward=bridge&event_type=\${eventType}\`, true)
           request.send(JSON.stringify(event))
         },
       }
@@ -187,17 +195,16 @@ function setupEventBridge(servers: Servers) {
   `
 }
 
-function formatLogsConfiguration(initConfiguration: LogsInitConfiguration) {
-  return formatConfiguration(initConfiguration)
-}
-
-function formatRumConfiguration(initConfiguration: RumInitConfiguration) {
-  return formatConfiguration(initConfiguration).replace('"LOCATION_ORIGIN"', 'location.origin')
-}
-
-function formatConfiguration(initConfiguration: LogsInitConfiguration | RumInitConfiguration) {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-  let result = JSON.stringify(initConfiguration, (key, value) => (key === 'beforeSend' ? 'BEFORE_SEND' : value))
+function formatConfiguration(initConfiguration: LogsInitConfiguration | RumInitConfiguration, servers: Servers) {
+  let result = JSON.stringify(
+    {
+      ...initConfiguration,
+      proxyUrl: servers.intake.url,
+    },
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    (key, value) => (key === 'beforeSend' ? 'BEFORE_SEND' : value)
+  )
+  result = result.replace('"LOCATION_ORIGIN"', 'location.origin')
   if (initConfiguration.beforeSend) {
     result = result.replace('"BEFORE_SEND"', initConfiguration.beforeSend.toString())
   }

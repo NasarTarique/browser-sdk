@@ -1,5 +1,8 @@
-import { ErrorHandling, ErrorSource, RelativeTime, TimeStamp } from '@datadog/browser-core'
-import { setup, TestSetupBuilder } from '../../../../test/specHelper'
+import type { RelativeTime, TimeStamp, ErrorWithCause } from '@datadog/browser-core'
+import { ErrorHandling, ErrorSource } from '@datadog/browser-core'
+import type { TestSetupBuilder } from '../../../../test/specHelper'
+import { setup } from '../../../../test/specHelper'
+import type { RawRumErrorEvent } from '../../../rawRumEvent.types'
 import { RumEventType } from '../../../rawRumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
 import { doStartErrorCollection } from './errorCollection'
@@ -7,14 +10,21 @@ import { doStartErrorCollection } from './errorCollection'
 describe('error collection', () => {
   let setupBuilder: TestSetupBuilder
   let addError: ReturnType<typeof doStartErrorCollection>['addError']
+  const viewContextsStub = {
+    findView: jasmine.createSpy('findView').and.returnValue({
+      id: 'abcde',
+      name: 'foo',
+    }),
+  }
 
   beforeEach(() => {
     setupBuilder = setup()
+      .withViewContexts(viewContextsStub)
       .withForegroundContexts({
         isInForegroundAt: () => true,
       })
-      .beforeBuild(({ lifeCycle, foregroundContexts }) => {
-        ;({ addError } = doStartErrorCollection(lifeCycle, foregroundContexts))
+      .beforeBuild(({ lifeCycle, foregroundContexts, featureFlagContexts }) => {
+        ;({ addError } = doStartErrorCollection(lifeCycle, foregroundContexts, featureFlagContexts))
       })
   })
 
@@ -41,12 +51,13 @@ describe('error collection', () => {
           error: {
             id: jasmine.any(String),
             message: 'foo',
-            resource: undefined,
             source: ErrorSource.CUSTOM,
             stack: jasmine.stringMatching('Error: foo'),
             handling_stack: 'Error: handling foo',
             type: 'Error',
             handling: ErrorHandling.HANDLED,
+            source_type: 'browser',
+            causes: undefined,
           },
           type: RumEventType.ERROR,
           view: {
@@ -57,6 +68,31 @@ describe('error collection', () => {
         startTime: 1234 as RelativeTime,
         domainContext: { error },
       })
+    })
+
+    it('should extract causes from error', () => {
+      const { rawRumEvents } = setupBuilder.build()
+      const error1 = new Error('foo') as ErrorWithCause
+      const error2 = new Error('bar') as ErrorWithCause
+      const error3 = new Error('biz') as ErrorWithCause
+
+      error1.cause = error2
+      error2.cause = error3
+
+      addError({
+        error: error1,
+        handlingStack: 'Error: handling foo',
+        startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
+      })
+      const { error } = rawRumEvents[0].rawRumEvent as RawRumErrorEvent
+      expect(error.message).toEqual('foo')
+      expect(error.source).toEqual(ErrorSource.CUSTOM)
+
+      expect(error?.causes?.length).toEqual(2)
+      expect(error?.causes?.[0].message).toEqual('bar')
+      expect(error?.causes?.[0].source).toEqual(ErrorSource.CUSTOM)
+      expect(error?.causes?.[1].message).toEqual('biz')
+      expect(error?.causes?.[1].source).toEqual(ErrorSource.CUSTOM)
     })
 
     it('should save the specified customer context', () => {
@@ -113,6 +149,22 @@ describe('error collection', () => {
         error: { foo: 'bar' },
       })
     })
+
+    it('should include feature flags', () => {
+      const { rawRumEvents } = setupBuilder
+        .withFeatureFlagContexts({ findFeatureFlagEvaluations: () => ({ feature: 'foo' }) })
+        .build()
+
+      addError({
+        error: { foo: 'bar' },
+        handlingStack: 'Error: handling foo',
+        startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
+      })
+
+      const rawRumErrorEvent = rawRumEvents[0].rawRumEvent as RawRumErrorEvent
+
+      expect(rawRumErrorEvent.feature_flags).toEqual({ feature: 'foo' })
+    })
   })
 
   describe('RAW_ERROR_COLLECTED LifeCycle event', () => {
@@ -122,12 +174,7 @@ describe('error collection', () => {
       lifeCycle.notify(LifeCycleEventType.RAW_ERROR_COLLECTED, {
         error: {
           message: 'hello',
-          resource: {
-            method: 'GET',
-            statusCode: 500,
-            url: 'url',
-          },
-          source: ErrorSource.NETWORK,
+          source: ErrorSource.CUSTOM,
           stack: 'bar',
           startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
           type: 'foo',
@@ -141,16 +188,13 @@ describe('error collection', () => {
         error: {
           id: jasmine.any(String),
           message: 'hello',
-          resource: {
-            method: 'GET',
-            status_code: 500,
-            url: 'url',
-          },
-          source: ErrorSource.NETWORK,
+          source: ErrorSource.CUSTOM,
           stack: 'bar',
           handling_stack: undefined,
           type: 'foo',
           handling: undefined,
+          source_type: 'browser',
+          causes: undefined,
         },
         view: {
           in_foreground: true,

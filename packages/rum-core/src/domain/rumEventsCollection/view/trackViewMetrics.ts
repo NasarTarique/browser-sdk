@@ -1,12 +1,14 @@
-import { Duration, noop, round, RelativeTime, ONE_SECOND, Observable } from '@datadog/browser-core'
-import { RumLayoutShiftTiming, supportPerformanceTimingEvent } from '../../../browser/performanceCollection'
+import type { Duration, RelativeTime, Observable, ClocksState } from '@datadog/browser-core'
+import { noop, round, ONE_SECOND, elapsed } from '@datadog/browser-core'
+import type { RumLayoutShiftTiming } from '../../../browser/performanceCollection'
+import { supportPerformanceTimingEvent } from '../../../browser/performanceCollection'
 import { ViewLoadingType } from '../../../rawRumEvent.types'
-import { LifeCycle, LifeCycleEventType } from '../../lifeCycle'
-import { EventCounts, trackEventCounts } from '../../trackEventCounts'
-import { waitIdlePage } from '../../waitIdlePage'
+import type { RumConfiguration } from '../../configuration'
+import type { LifeCycle } from '../../lifeCycle'
+import { LifeCycleEventType } from '../../lifeCycle'
+import { waitPageActivityEnd } from '../../waitPageActivityEnd'
 
 export interface ViewMetrics {
-  eventCounts: EventCounts
   loadingTime?: Duration
   cumulativeLayoutShift?: number
 }
@@ -14,31 +16,23 @@ export interface ViewMetrics {
 export function trackViewMetrics(
   lifeCycle: LifeCycle,
   domMutationObservable: Observable<void>,
+  configuration: RumConfiguration,
   scheduleViewUpdate: () => void,
-  loadingType: ViewLoadingType
+  loadingType: ViewLoadingType,
+  viewStart: ClocksState
 ) {
-  const viewMetrics: ViewMetrics = {
-    eventCounts: {
-      errorCount: 0,
-      longTaskCount: 0,
-      resourceCount: 0,
-      userActionCount: 0,
-    },
-  }
-  const { stop: stopEventCountsTracking } = trackEventCounts(lifeCycle, (newEventCounts) => {
-    viewMetrics.eventCounts = newEventCounts
-    scheduleViewUpdate()
-  })
+  const viewMetrics: ViewMetrics = {}
 
-  const { setActivityLoadingTime, setLoadEvent } = trackLoadingTime(loadingType, (newLoadingTime) => {
-    viewMetrics.loadingTime = newLoadingTime
-    scheduleViewUpdate()
-  })
-
-  const { stop: stopActivityLoadingTimeTracking } = trackActivityLoadingTime(
+  const { stop: stopLoadingTimeTracking, setLoadEvent } = trackLoadingTime(
     lifeCycle,
     domMutationObservable,
-    setActivityLoadingTime
+    configuration,
+    loadingType,
+    viewStart,
+    (newLoadingTime) => {
+      viewMetrics.loadingTime = newLoadingTime
+      scheduleViewUpdate()
+    }
   )
 
   let stopCLSTracking: () => void
@@ -53,8 +47,7 @@ export function trackViewMetrics(
   }
   return {
     stop: () => {
-      stopEventCountsTracking()
-      stopActivityLoadingTimeTracking()
+      stopLoadingTimeTracking()
       stopCLSTracking()
     },
     setLoadEvent,
@@ -62,7 +55,14 @@ export function trackViewMetrics(
   }
 }
 
-function trackLoadingTime(loadType: ViewLoadingType, callback: (loadingTime: Duration) => void) {
+function trackLoadingTime(
+  lifeCycle: LifeCycle,
+  domMutationObservable: Observable<void>,
+  configuration: RumConfiguration,
+  loadType: ViewLoadingType,
+  viewStart: ClocksState,
+  callback: (loadingTime: Duration) => void
+) {
   let isWaitingForLoadEvent = loadType === ViewLoadingType.INITIAL_LOAD
   let isWaitingForActivityLoadingTime = true
   const loadingTimeCandidates: Duration[] = []
@@ -73,7 +73,18 @@ function trackLoadingTime(loadType: ViewLoadingType, callback: (loadingTime: Dur
     }
   }
 
+  const { stop } = waitPageActivityEnd(lifeCycle, domMutationObservable, configuration, (event) => {
+    if (isWaitingForActivityLoadingTime) {
+      isWaitingForActivityLoadingTime = false
+      if (event.hadActivity) {
+        loadingTimeCandidates.push(elapsed(viewStart.timeStamp, event.end))
+      }
+      invokeCallbackIfAllCandidatesAreReceived()
+    }
+  })
+
   return {
+    stop,
     setLoadEvent: (loadEvent: Duration) => {
       if (isWaitingForLoadEvent) {
         isWaitingForLoadEvent = false
@@ -81,30 +92,7 @@ function trackLoadingTime(loadType: ViewLoadingType, callback: (loadingTime: Dur
         invokeCallbackIfAllCandidatesAreReceived()
       }
     },
-    setActivityLoadingTime: (activityLoadingTime: Duration | undefined) => {
-      if (isWaitingForActivityLoadingTime) {
-        isWaitingForActivityLoadingTime = false
-        if (activityLoadingTime !== undefined) {
-          loadingTimeCandidates.push(activityLoadingTime)
-        }
-        invokeCallbackIfAllCandidatesAreReceived()
-      }
-    },
   }
-}
-
-function trackActivityLoadingTime(
-  lifeCycle: LifeCycle,
-  domMutationObservable: Observable<void>,
-  callback: (loadingTimeValue: Duration | undefined) => void
-) {
-  return waitIdlePage(lifeCycle, domMutationObservable, (event) => {
-    if (event.hadActivity) {
-      callback(event.duration)
-    } else {
-      callback(undefined)
-    }
-  })
 }
 
 /**
@@ -127,12 +115,14 @@ function trackActivityLoadingTime(
 function trackCumulativeLayoutShift(lifeCycle: LifeCycle, callback: (layoutShift: number) => void) {
   let maxClsValue = 0
   const window = slidingSessionWindow()
-  const { unsubscribe: stop } = lifeCycle.subscribe(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, (entry) => {
-    if (entry.entryType === 'layout-shift' && !entry.hadRecentInput) {
-      window.update(entry)
-      if (window.value() > maxClsValue) {
-        maxClsValue = window.value()
-        callback(round(maxClsValue, 4))
+  const { unsubscribe: stop } = lifeCycle.subscribe(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, (entries) => {
+    for (const entry of entries) {
+      if (entry.entryType === 'layout-shift' && !entry.hadRecentInput) {
+        window.update(entry)
+        if (window.value() > maxClsValue) {
+          maxClsValue = window.value()
+          callback(round(maxClsValue, 4))
+        }
       }
     }
   })

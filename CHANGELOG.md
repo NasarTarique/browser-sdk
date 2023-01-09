@@ -16,6 +16,371 @@
 
 ---
 
+## v4.29.1
+
+- ⚗️ [REPLAY] Experiment support for shadow DOM ([#1787](https://github.com/DataDog/browser-sdk/pull/1787))
+- 🔊 [RUMF-1345] add telemetry logs on untrusted events ([#1910](https://github.com/DataDog/browser-sdk/pull/1910))
+- 🔊 add view document_count in non-view events ([#1892](https://github.com/DataDog/browser-sdk/pull/1892))
+
+## v4.29.0
+
+- 🐛 [RUMF-1435] do not retry status 0 request while online ([#1891](https://github.com/DataDog/browser-sdk/pull/1891))
+- ✨ [RUMF-1236] Add support for OTel headers ([#1832](https://github.com/DataDog/browser-sdk/pull/1832))
+- 🐛[RUMF-1435] don't retry opaque response ([#1877](https://github.com/DataDog/browser-sdk/pull/1877))
+- ✨ [RUMF-1425] enable request retry/throttle for replay intake ([#1819](https://github.com/DataDog/browser-sdk/pull/1819))
+- 🐛 [RUMF-1421] keep updating the view event counters after view end ([#1864](https://github.com/DataDog/browser-sdk/pull/1864))
+
+## v4.28.1
+
+- Re-release v4.28.0 to work around a NPM packaging issue
+
+## v4.28.0
+
+- 🐛 [RUMF-1337] Fix incorrect fetch duration ([#1875](https://github.com/DataDog/browser-sdk/pull/1875))
+
+## v4.27.1
+
+- 🐛 [RUMF-1449] fix Zone support when **symbol** is missing ([#1872](https://github.com/DataDog/browser-sdk/pull/1872))
+
+## v4.27.0
+
+- ✨Allow internal analytics subdomain ([#1863](https://github.com/DataDog/browser-sdk/pull/1863))
+- 🔊 Collect computed and perf entry durations ([#1861](https://github.com/DataDog/browser-sdk/pull/1861))
+- 🐛 [RUMF-1449] workaround for Firefox memory leak when using Zone.js ([#1860](https://github.com/DataDog/browser-sdk/pull/1860))
+- ✨ send data from the SDK to the extension ([#1850](https://github.com/DataDog/browser-sdk/pull/1850))
+- ♻️ [RUMF-1440] improve feature flag collection implementation ([#1839](https://github.com/DataDog/browser-sdk/pull/1839))
+
+## v4.26.0
+
+- 🐛 [RUMF-1421] improve counters by filtering child events ([#1837](https://github.com/DataDog/browser-sdk/pull/1837))
+- ✨ [RUMF-1435] Add transport api on events ([#1840](https://github.com/DataDog/browser-sdk/pull/1840))
+- ⚗️ [RUMF-1337] add `fetch_duration` experiment to resolve incorrect fetch duration ([#1810](https://github.com/DataDog/browser-sdk/pull/1810))
+- ✨ Move extension settings to a Settings panel ([#1847](https://github.com/DataDog/browser-sdk/pull/1847))
+- ✨ Clear event list on page reload for SDK extension ([#1825](https://github.com/DataDog/browser-sdk/pull/1825))
+- ⬆️ [RUMF-1434] fix yarn failing to install puppeteer on M1 mac ([#1843](https://github.com/DataDog/browser-sdk/pull/1843))
+- ⬆️ [RUMF-1434] fix running e2e tests on M1 macs ([#1842](https://github.com/DataDog/browser-sdk/pull/1842))
+- ✨ Improve event description message in developer extension ([#1831](https://github.com/DataDog/browser-sdk/pull/1831))
+- ✨ [RUMF-1396] migrate extension to manifest v3 ([#1828](https://github.com/DataDog/browser-sdk/pull/1828))
+
+## v4.25.0
+
+- ⚡️ ⚗ [RUMF-1438] Collect feature flags ([#1827](https://github.com/DataDog/browser-sdk/pull/1827))
+- ✨ Auto Flush for SDK extension ([#1824](https://github.com/DataDog/browser-sdk/pull/1824))
+
+## v4.24.1
+
+- ⏪ Revert "🐛 [RUMF-1410] Allow serialization of objects with cyclic references ([#1783](https://github.com/DataDog/browser-sdk/pull/1783))" ([#1821](https://github.com/DataDog/browser-sdk/pull/1821))
+- 📈[RUMF-1432] Collect trackResources and trackLongTasks configs ([#1814](https://github.com/DataDog/browser-sdk/pull/1814))
+- 🗑️ [RUMF-1433] Remove Preflight request Performance Entry check ([#1813](https://github.com/DataDog/browser-sdk/pull/1813))
+- ✨[RUMF-1435] Add some retry info on events ([#1817](https://github.com/DataDog/browser-sdk/pull/1817))
+
+## v4.24.0
+
+- ⚗️✨ [RUMF-1379] heatmaps: enable descendant combined selectors ([#1811](https://github.com/DataDog/browser-sdk/pull/1811))
+- ✨ [RUMF-1409] Provide setUser and related functions for logs SDK ([#1801](https://github.com/DataDog/browser-sdk/pull/1801))
+- ⚗️ ✨ [RUMF-1425] use the retry/throttle transport strategy to send segments ([#1807](https://github.com/DataDog/browser-sdk/pull/1807))
+- ♻️ [RUMF-1424] factorize page exit logic ([#1805](https://github.com/DataDog/browser-sdk/pull/1805))
+- 📝 Clarify log SDK usage in the readme ([#1767](https://github.com/DataDog/browser-sdk/pull/1767))
+
+## v4.23.3
+
+- 🐛 [REPLAY-1075] Convert relative URLS to absolute in stylesheets ([#1792](https://github.com/DataDog/browser-sdk/pull/1792))
+- 🐛 [RUMF-1423] prevent unexpected behavior when our xhr are reused ([#1797](https://github.com/DataDog/browser-sdk/pull/1797))
+- 🐛 [RUMF-1410] Allow serialization of objects with cyclic references ([#1783](https://github.com/DataDog/browser-sdk/pull/1783))
+
+## v4.23.2
+
+- 🔉[RUMF-1423] Investigation for retry issue - part 2 ([#1793](https://github.com/DataDog/browser-sdk/pull/1793))
+
+## v4.23.1
+
+- 🔉[RUMF-1423] Add debug log for retry issue ([#1790](https://github.com/DataDog/browser-sdk/pull/1790))
+
+## v4.23.0
+
+- ✨[RUMF-1377] Enable new request strategy ([#1770](https://github.com/DataDog/browser-sdk/pull/1770))
+- 🐛 [RUMF-1393] don't mask attributes used to create CSS selectors ([#1737](https://github.com/DataDog/browser-sdk/pull/1737))
+- ⚗ [RUMF-1379] heatmap: experiment improved selector regarding unicity ([#1741](https://github.com/DataDog/browser-sdk/pull/1741))
+
+## v4.22.0
+
+- ⚡️ Enable telemetry configuration ([#1780](https://github.com/DataDog/browser-sdk/pull/1780))
+- 🔊 [RUMF-1416] Use service distinguish log rum telemetry configuration ([#1774](https://github.com/DataDog/browser-sdk/pull/1774))
+- ✨ accept functions in allowedTracingOrigins/excludedActivityUrls arguments list ([#1775](https://github.com/DataDog/browser-sdk/pull/1775))
+- ⚗️ [RUMF-1405] remove mechanism to simulate intake issue ([#1768](https://github.com/DataDog/browser-sdk/pull/1768))
+- 🔊 Collect configuration telemetry event ([#1760](https://github.com/DataDog/browser-sdk/pull/1760))
+
+## v4.21.2
+
+- ⚗️ [RUMF-1405] add mechanism to simulate intake issue ([#1757](https://github.com/DataDog/browser-sdk/pull/1757))
+
+## v4.21.1
+
+- 🐛 npm publish: skip publish confirmation ([#1755](https://github.com/DataDog/browser-sdk/pull/1755))
+
+## v4.21.0
+
+- ✨ [RUMF-1353] Collect error causes ([#1740](https://github.com/DataDog/browser-sdk/pull/1740))
+- 🐛 [RUMF-1276] handle performance entry without `toJSON` ([#1751](https://github.com/DataDog/browser-sdk/pull/1751))
+- 🐛 handle undefined policy ([#1752](https://github.com/DataDog/browser-sdk/pull/1752))
+
+## v4.20.0
+
+- ✨ [RUMF-1391] Introduce trackResources, trackLongTasks and sessionReplaySampleRate ([#1744](https://github.com/DataDog/browser-sdk/pull/1744))
+- ♻️ [RUMF-1368] use the PointerDown event target for click actions ([#1731](https://github.com/DataDog/browser-sdk/pull/1731))
+- ⚗ [RUMF-1379] use experimented CSS selectors strategies by default ([#1738](https://github.com/DataDog/browser-sdk/pull/1738))
+
+## v4.19.1
+
+- 🐛 [RUMF-1369] Exclude error message from stacktrace parsing ([#1725](https://github.com/DataDog/browser-sdk/pull/1725))
+- 🐛 [RUMF-1384] Filter abnormal TTFB values ([#1729](https://github.com/DataDog/browser-sdk/pull/1729))
+- 🐛 [RUMF-1378] do not mask action name attributes ([#1721](https://github.com/DataDog/browser-sdk/pull/1721))
+- ⚗️ [RUMF-1378] use stable attributes when computing heatmap selector ([#1724](https://github.com/DataDog/browser-sdk/pull/1724))
+- ⚗️ [RUMF-1379] heatmaps: refine selectors pass 2 ([#1726](https://github.com/DataDog/browser-sdk/pull/1726))
+- ⚗️ [RUMF-1351] tweak retry strategy ([#1723](https://github.com/DataDog/browser-sdk/pull/1723))
+- ⚗️ [RUMF-1351] retry request on timeout ([#1728](https://github.com/DataDog/browser-sdk/pull/1728))
+
+## v4.19.0
+
+- ✨ [RUMF-1286] test for expected features before starting recording ([#1719](https://github.com/DataDog/browser-sdk/pull/1719))
+- ✨ [RUMF-1371] Collect view time to first byte ([#1717](https://github.com/DataDog/browser-sdk/pull/1717))
+- 📝 Fix `actionNameAttribute` broken link ([#1708](https://github.com/DataDog/browser-sdk/pull/1708))
+- ⚗️🔉 [RUMF-1351] add error when reaching max events size queued for upload ([#1716](https://github.com/DataDog/browser-sdk/pull/1716))
+- ⚗️🔉 [RUMF-1351] retry: add extra context to queue full log ([#1714](https://github.com/DataDog/browser-sdk/pull/1714))
+- ⚗️✨[RUMF-1351] experiment request retry strategy ([#1700](https://github.com/DataDog/browser-sdk/pull/1700))
+
+## v4.18.1
+
+- 🐛 [RUMF-1333] fix keepalive support check ([#1712](https://github.com/DataDog/browser-sdk/pull/1712))
+
+## v4.18.0
+
+- ✨ [RUMF-1306] Send the tracing sample rate in rule_psr for resources ([#1669](https://github.com/DataDog/browser-sdk/pull/1669)), ([#1705](https://github.com/DataDog/browser-sdk/pull/1705))
+- ✨ [RUMF-1333] Send request with fetch keepalive + fallback ([#1701](https://github.com/DataDog/browser-sdk/pull/1701)), ([#1682](https://github.com/DataDog/browser-sdk/pull/1682))
+- ✨ [RUMF-1309] Implement nested CSS support ([#1699](https://github.com/DataDog/browser-sdk/pull/1699))
+- 🐛 Fix instrumention of null function with 3rd party wrapper ([#1570](https://github.com/DataDog/browser-sdk/pull/1570)) ([#1697](https://github.com/DataDog/browser-sdk/pull/1697))
+
+## v4.17.2
+
+- 🐛 [RUMF-1344] scroll positions: remove fallback for null scrollingElement ([#1694](https://github.com/DataDog/browser-sdk/pull/1694))
+- ⚗️ [RUMF-1356] selectors using stable attributes and no class names ([#1689](https://github.com/DataDog/browser-sdk/pull/1689))
+- 👷 [RUMF-1357] Add a peer dependency between rum and logs packages ([#1668](https://github.com/DataDog/browser-sdk/pull/1668))
+
+## v4.17.1
+
+- 🐛 [RUMF-1344] try to improve document scrolling element handling ([#1688](https://github.com/DataDog/browser-sdk/pull/1688))
+- ✨⚗ [RUMF-1355] add selector with stable attributes ([#1684](https://github.com/DataDog/browser-sdk/pull/1684))
+
+## v4.17.0
+
+- ✨ [RUMF-1315] Extend user object methods ([#1641](https://github.com/DataDog/browser-sdk/pull/1641))
+- ⚡[RUMF-1344] Serialize scroll positions only for full snapshots ([#1670](https://github.com/DataDog/browser-sdk/pull/1670))
+- ⚡ [RUMF-1344] Access scroll attributes only on initial full snapshot ([#1680](https://github.com/DataDog/browser-sdk/pull/1680))
+- ⚗️ [RUMF-1346] heatmaps: move action event attributes ([#1667](https://github.com/DataDog/browser-sdk/pull/1667))
+- 🐛 [RUMF-1239] Hide placeholder value when privacy set to mask ([#1660](https://github.com/DataDog/browser-sdk/pull/1660))
+- 🐛 fix compatibility check ([#1685](https://github.com/DataDog/browser-sdk/pull/1685))
+
+## v4.16.1
+
+- 🐛 [RUMF-1274] track request to undefined/null URL ([#1665](https://github.com/DataDog/browser-sdk/pull/1665))
+
+## v4.16.0
+
+- ✨ [REPLAY-898] Recording Frustration signals (dead, error & rage clicks) for session replay ([#1632](https://github.com/DataDog/browser-sdk/pull/1632))
+- 🐛 [RUMF-1310] handle extra stacktrace parsing cases ([#1647](https://github.com/DataDog/browser-sdk/pull/1647))
+- 🐛 improve `jsonStringify` implementation ([#1653](https://github.com/DataDog/browser-sdk/pull/1653))
+- 🔒 [RUMF-1335] fix incorrect string escape ([#1651](https://github.com/DataDog/browser-sdk/pull/1651))
+
+## v4.15.0
+
+- 🐛 frustration signals: track window open ([#1631](https://github.com/DataDog/browser-sdk/pull/1631))
+- 🐛 [RUMF-1327] rum synthetics: fix logs session conflict ([#1629](https://github.com/DataDog/browser-sdk/pull/1629))
+- 🔊 Add feature flags to telemetry events ([#1625](https://github.com/DataDog/browser-sdk/pull/1625))
+- ✨[RUMF-1314] Expose a DD_LOGS.getInternalContext ([#1626](https://github.com/DataDog/browser-sdk/pull/1626))
+- 🐛 [RUMF-1273] fix BUILD_MODE scope ([#1627](https://github.com/DataDog/browser-sdk/pull/1627))
+
+## v4.14.0
+
+- ✨ [RUMF-1211] release Frustration Signals publicly ([#1617](https://github.com/DataDog/browser-sdk/pull/1617))
+- 🐛 [RUMF-1294] ignore dead clicks based on the click event target ([#1610](https://github.com/DataDog/browser-sdk/pull/1610))
+- 📝 Fixing intrapage broken links ([#1613](https://github.com/DataDog/browser-sdk/pull/1613))
+- 📝 Removes Extra Link ([#1612](https://github.com/DataDog/browser-sdk/pull/1612))
+- 🐛 [RUMF-1297] frustration signals: track input changes ([#1603](https://github.com/DataDog/browser-sdk/pull/1603))
+- 📝 DOCS-2277 Browser Monitoring Edits ([#1572](https://github.com/DataDog/browser-sdk/pull/1572))
+- 🐛 [RUMF-1209] frustration signals: track selection change ([#1596](https://github.com/DataDog/browser-sdk/pull/1596))
+
+## v4.13.0
+
+- ✨ Enable service and version update on startView ([#1601](https://github.com/DataDog/browser-sdk/pull/1601))
+
+## v4.12.0
+
+- 🐛 [RUMF-1305] forbid the usage of `Date.now` ([#1600](https://github.com/DataDog/browser-sdk/pull/1600))
+- 🔊 Clear batch before send to allow telemetry in httpRequest.send ([#1594](https://github.com/DataDog/browser-sdk/pull/1594))
+- ⚗✨ [RUMF-1288] Collect viewport size ([#1584](https://github.com/DataDog/browser-sdk/pull/1584))
+
+## v4.11.5
+
+- 🐛 [RUMF-1303] stop forwarding network errors when forwardErrorsToLogs is false ([#1591](https://github.com/DataDog/browser-sdk/pull/1591))
+- ♻️ Simplify RUM assembly ([#1588](https://github.com/DataDog/browser-sdk/pull/1588))
+
+## v4.11.4
+
+- 🏷️ adjust types to allow updating the SDK in Datadog app ([#1587](https://github.com/DataDog/browser-sdk/pull/1587))
+- [RUMF-1280] collect click position ([#1566](https://github.com/DataDog/browser-sdk/pull/1566))
+
+## v4.11.3
+
+- ✨ improve developer extension ([#1580](https://github.com/DataDog/browser-sdk/pull/1580))
+- 🐛 [RUMF-1267] remove last circular dependencies ([#1577](https://github.com/DataDog/browser-sdk/pull/1577))
+
+## v4.11.2
+
+- 🏷️ [RUMF-1256] adjust StyleSheetRule records to support index paths ([#1571](https://github.com/DataDog/browser-sdk/pull/1571))
+- 🐛 [RUMF-1267] resolve remaining cyclic dependencies related to telemetry ([#1567](https://github.com/DataDog/browser-sdk/pull/1567))
+- 📝 Browser Monitoring Edits ([#1563](https://github.com/DataDog/browser-sdk/pull/1563))
+
+## v4.11.1
+
+- ♻️ [RUMF-1190] cleanup telemetry ([#1560](https://github.com/DataDog/browser-sdk/pull/1560))
+- ♻️ [RUMF-1267] remove circular dependencies part 1 ([#1559](https://github.com/DataDog/browser-sdk/pull/1559))
+- ♻️ [RUMF-1277] rename frustration types ([#1557](https://github.com/DataDog/browser-sdk/pull/1557))
+
+## v4.11.0
+
+- ✨ [RUMF-1262] ignore some URLs when watching the page activity ([#1536](https://github.com/DataDog/browser-sdk/pull/1536))
+- ✨ [RUMF-1191] enable telemetry on us1 site ([#1554](https://github.com/DataDog/browser-sdk/pull/1554))
+
+## v4.10.4
+
+- ✨ [RUMF-1191] enable telemetry on eu site ([#1551](https://github.com/DataDog/browser-sdk/pull/1551))
+- ✨ [RUMF-1264] scrub customer frames from telemetry errors ([#1546](https://github.com/DataDog/browser-sdk/pull/1546))
+
+## v4.10.3
+
+- 🐛 Fix dependency issue ([#1549](https://github.com/DataDog/browser-sdk/pull/1549))
+
+## v4.10.2
+
+- ✨ rename Replay plan to Premium plan ([#1534](https://github.com/DataDog/browser-sdk/pull/1534))
+- ✨ enable telemetry on us3 site ([#1544](https://github.com/DataDog/browser-sdk/pull/1544))
+
+## v4.10.1
+
+- ✨ enable telemetry on us5 site ([#1540](https://github.com/DataDog/browser-sdk/pull/1540))
+
+## v4.10.0
+
+- ✨[RUMF-1253] add `tracingSampleRate` option ([#1526](https://github.com/DataDog/browser-sdk/pull/1526))
+- ⚗️✨ [RUMF-1258] stop ongoing action on view end ([#1528](https://github.com/DataDog/browser-sdk/pull/1528))
+- 🐛 [RUMF-1259] support Zone.js < 0.8.6 ([#1530](https://github.com/DataDog/browser-sdk/pull/1530))
+- ✨ add a button to clear events in the developer extension ([#1527](https://github.com/DataDog/browser-sdk/pull/1527))
+- ⚗✨ [RUMF-1210] add a `trackFrustrations` initialization parameter ([#1524](https://github.com/DataDog/browser-sdk/pull/1524))
+- ✨[RUMF-1257] prevent dual shipping of telemetry events ([#1523](https://github.com/DataDog/browser-sdk/pull/1523))
+- ✨ [RUMF-1251] allow to enable telemetry by site ([#1520](https://github.com/DataDog/browser-sdk/pull/1520))
+
+## v4.9.0
+
+- ✨ Upgraded console logger to log the proper levels ([#1501](https://github.com/DataDog/browser-sdk/pull/1501))
+- ♻️ [RUMF-1178] New logger assembly flow ([#1497](https://github.com/DataDog/browser-sdk/pull/1497))
+- ⚗✨ [RUMF-1209] introduce "dead" and "error" frustration types ([#1487](https://github.com/DataDog/browser-sdk/pull/1487))
+- ⚗✨ [RUMF-1209] collect rage clicks ([#1488](https://github.com/DataDog/browser-sdk/pull/1488))
+- ⚗✨ [RUMF-1214] implement frustration signals counters ([#1511](https://github.com/DataDog/browser-sdk/pull/1511))
+
+## v4.8.1
+
+- 🐛 [RUMF-1240] fix attribute mutating to an empty value ([#1512](https://github.com/DataDog/browser-sdk/pull/1512))
+- ⚗️ [RUMF-1182] add telemetry sample rate ([#1510](https://github.com/DataDog/browser-sdk/pull/1510))
+- 💡 Update links to api key docs ([#1508](https://github.com/DataDog/browser-sdk/pull/1508))
+
+## v4.8.0
+
+- ✨ [RUMF-1192] forward Reports to Datadog ([#1506](https://github.com/DataDog/browser-sdk/pull/1506))
+- ✨ [RUMF-1192] forward `console.*` logs to Datadog ([#1505](https://github.com/DataDog/browser-sdk/pull/1505))
+- 📝 fix documentation for `proxyUrl` documentation ([#1503](https://github.com/DataDog/browser-sdk/pull/1503))
+- ✨ [RUMF-1237] The event bridge allowed hosts should also match subdomains ([#1499](https://github.com/DataDog/browser-sdk/pull/1499))
+- 📝 add `replaySampleRate` to README examples ([#1370](https://github.com/DataDog/browser-sdk/pull/1370))
+
+## v4.7.1
+
+- 🐛 Adjust records generated during view change so their date matches the view date ([#1486](https://github.com/DataDog/browser-sdk/pull/1486))
+- ⚗✨ [RUMF-1224] remove console APIs prefix ([#1479](https://github.com/DataDog/browser-sdk/pull/1479))
+- ♻️ [RUMF-1178] improve logs assembly part 2 ([#1463](https://github.com/DataDog/browser-sdk/pull/1463))
+- ⚗✨ Allow update service version with start view ([#1448](https://github.com/DataDog/browser-sdk/pull/1448))
+- ⚗✨ [RUMF-1208] don't discard automatic action on view creation ([#1451](https://github.com/DataDog/browser-sdk/pull/1451))
+- ⚗✨ [RUMF-1207] collect concurrent actions ([#1434](https://github.com/DataDog/browser-sdk/pull/1434))
+- ♻️ [RUMF-1207] collect concurrent actions groundwork - move action history closer to action collection ([#1432](https://github.com/DataDog/browser-sdk/pull/1432))
+
+## v4.7.0
+
+Note: The Logs Browser SDK 3.10.1 (released on December 21th, 2021) unexpectedly changed the initialization parameter `forwardErrorsToLogs` default value from `true` to `false`. This release restores the default value to `true`, so Logs Browser SDK users who don't specify this parameter will have errors forwarded as logs.
+
+- 🐛 [RUMF-1217] restore forwardErrorsToLogs default value to `true` ([#1433](https://github.com/DataDog/browser-sdk/pull/1433))
+- 🐛 [RUMF-1203] fix `stopSessionReplayRecording` instrumentation cleanup ([#1442](https://github.com/DataDog/browser-sdk/pull/1442))
+- ♻️ 🐛 [RUMF-1178] fix logs displayed twice in the console ([#1425](https://github.com/DataDog/browser-sdk/pull/1425))
+- 📝 Update browser config to include SDK version ([#1380](https://github.com/DataDog/browser-sdk/pull/1380))
+
+## v4.6.1
+
+- 🐛 fix build-env replacement in npm packages ([#1389](https://github.com/DataDog/browser-sdk/pull/1389))
+
+## v4.6.0
+
+- 📦 [RUMF-1162] update developer-extension ([#1379](https://github.com/DataDog/browser-sdk/pull/1379))
+- 🔥 [RUMF-1198] remove problematic and useless code from the DeflateWorker ([#1378](https://github.com/DataDog/browser-sdk/pull/1378))
+- ⚗️✨ [RUMF-1175] collect reports and csp violation ([#1332](https://github.com/DataDog/browser-sdk/pull/1332))
+- ⚗️ [RUMF-1181] collect telemetry events ([#1374](https://github.com/DataDog/browser-sdk/pull/1374))
+- 📄 Update documentation ([#1362](https://github.com/DataDog/browser-sdk/pull/1362))
+- ♻️ [RUMF-1181] preliminary refactorings for telemetry events collection ([#1371](https://github.com/DataDog/browser-sdk/pull/1371))
+- 🎨 Avoid template syntax when not needed ([#1372](https://github.com/DataDog/browser-sdk/pull/1372))
+- 📦 [RUMF-1168] update typescript ([#1368](https://github.com/DataDog/browser-sdk/pull/1368))
+- ⚡️ [RUMF-1171] prefer const enums ([#1364](https://github.com/DataDog/browser-sdk/pull/1364))
+- 🔥 Clear remaining code of network error removal ([#1367](https://github.com/DataDog/browser-sdk/pull/1367))
+- ⚡️ Process buffered performance entries in an idle callback ([#1337](https://github.com/DataDog/browser-sdk/pull/1337))
+- ⚡️ [RUMF-1043] remove TSLib dependency ([#1347](https://github.com/DataDog/browser-sdk/pull/1347))
+- ⚗️✨[RUMF-1188] add telemetry event types ([#1353](https://github.com/DataDog/browser-sdk/pull/1353))
+
+## v4.5.0
+
+- ⚡️ [RUMF-1115] throttle view updates by addTiming ([#1355](https://github.com/DataDog/browser-sdk/pull/1355))
+- 📝 Update the configuration of the Browser Sessions ([#1322](https://github.com/DataDog/browser-sdk/pull/1322))
+- ✨ [RUMF-1177] add index_in_view to segment meta ([#1342](https://github.com/DataDog/browser-sdk/pull/1342))
+- ✨ [RUMF-1103] enable RUM tracking inside mobile webviews ([#1333](https://github.com/DataDog/browser-sdk/pull/1333))
+- ⚗ [RUMF-1176] collect other console logs new ([#1316](https://github.com/DataDog/browser-sdk/pull/1316))
+
+## v4.4.0
+
+- ✨ [RUMF-1180] add `error.source_type` attribute ([#1328](https://github.com/DataDog/browser-sdk/pull/1328))
+- ⚡️ [RUMF-1169] cleanup compute stack trace ([#1335](https://github.com/DataDog/browser-sdk/pull/1335))
+- 🐛 [RUMF-1079] limit session inconsistencies issue on chromium browsers ([#1327](https://github.com/DataDog/browser-sdk/pull/1327))
+
+## v4.3.0
+
+- ✨ [RUMF-1135] expose SDK version through global variable ([#1278](https://github.com/DataDog/browser-sdk/pull/1278))
+- ✨ [RUMF-1174] forward event to bridge with rum type ([#1309](https://github.com/DataDog/browser-sdk/pull/1309))
+- 🐛 [RUMF-1153] fix initial view loading time computation ([#1315](https://github.com/DataDog/browser-sdk/pull/1315))
+- ⚗ [RUMF-1079] restrict cookie-lock to chromium browsers ([#1283](https://github.com/DataDog/browser-sdk/pull/1283))
+
+## v4.2.0
+
+- ⚡️ [RUMF-1113] Notify performance entries by batch ([#1255](https://github.com/DataDog/browser-sdk/pull/1255))
+- 🐛 [RUMF-1147] Implement TextEncoder().encode fallback for replay encorder ([#1269](https://github.com/DataDog/browser-sdk/pull/1269))
+- ✨ [RUMF-1146] add 'source:browser' to all RUM events ([#1271](https://github.com/DataDog/browser-sdk/pull/1271))
+- ⚡️ [RUMF-1111] limit the number of bytes read from the response ([#1264](https://github.com/DataDog/browser-sdk/pull/1264))
+- ✨ [REPLAY-564] enable visual viewport recording ([#1247](https://github.com/DataDog/browser-sdk/pull/1247))
+- 📝 add clarification to config example ([#1268](https://github.com/DataDog/browser-sdk/pull/1268))
+- ⚡️ [RUMF-1111] compute response text in trackNetworkError ([#1263](https://github.com/DataDog/browser-sdk/pull/1263))
+- 📝 [RUMF-1137] replace major changes description by links to the upgrade guide ([#1265](https://github.com/DataDog/browser-sdk/pull/1265))
+- ⚗ [RUMF-1079] tweak max number of lock retries ([#1262](https://github.com/DataDog/browser-sdk/pull/1262))
+
+## v4.1.0
+
+- 🐛 [RUMF-1143] make sure to drop LCP timings if the page was previously hidden ([#1259](https://github.com/DataDog/browser-sdk/pull/1259))
+- ⚗🐛 [RUMF-1079] add lock mechanism for session cookie writes ([#1230](https://github.com/DataDog/browser-sdk/pull/1230))
+- ✨ [RUMF-1119] Implement dual ship for other orgs ([#1248](https://github.com/DataDog/browser-sdk/pull/1248))
+- ✨ [RUMF-1109] Add event rate limiters for loggers ([#1243](https://github.com/DataDog/browser-sdk/pull/1243))
+- ⚡️ [REPLAY-565] ♻️ Remove URL "relative to absolute" transformation ([#1244](https://github.com/DataDog/browser-sdk/pull/1244))
+
 ## v4.0.1
 
 - 🐛 let the backend to most of the tags sanitization ([#1252](https://github.com/DataDog/browser-sdk/pull/1252))
@@ -25,54 +390,7 @@
 
 ## v4.0.0
 
-Here is the list of all the breaking changes introduced by v4 of the RUM and Logs SDKs.
-
-### [RUM and Logs] Intake URLs change
-
-We changed URLs of where the Browser SDK data is sent. Please make sure that your [Content Security Policy is up to date](https://docs.datadoghq.com/real_user_monitoring/faq/content_security_policy/?tab=us).
-
-### [RUM and Logs] Drop support for TypeScript below v3.8.2
-
-The Browser SDK is now incompatible with TypeScript below v3.8.2. If you are using TypeScript, please make sure that the version you are using is greater or equal to v3.8.2.
-
-### [RUM and Logs] Tags syntax sanitization
-
-`version`, `env` and `service` [initialization parameters](https://docs.datadoghq.com/real_user_monitoring/browser/#initialization-parameters) are sent as tags to Datadog. The Browser SDK is now slightly sanitizes them (to ensure that they don't unexpectedly generate multiple tags) and prints a warning if those values don't meet the [tag requirements syntax](https://docs.datadoghq.com/getting_started/tagging/#defining-tags).
-
-### [RUM and Logs] Stricter initialization parameters typings
-
-TypeScript types representing initialization parameters are now stricter and may reject previously accepted unsupported parameters. If you get typechecking issues, please make sure you are only providing supported initialization parameters.
-
-### [RUM and Logs] Remove deprecated XHR `_datadog_xhr` field
-
-The Browser SDK previously used a `_datadog_xhr` property on `XMLHttpRequest` objects representing
-its internal state. This property have been removed without replacement as it wasn't intended to be
-used externally.
-
-### [RUM and Logs] Remove deprecated `proxyHost` initialization parameter
-
-The `proxyHost` initialization parameter have been removed. Make sure to use the simpler [`proxyUrl` initialization parameter](https://docs.datadoghq.com/real_user_monitoring/faq/proxy_rum_data/?tab=npm) instead.
-
-### [RUM Session Replay] Remove deprecated privacy options support
-
-`input-ignored` and `input-masked` are no longer valid privacy options and should be replaced with
-the [`mask-user-input` privacy option](https://docs.datadoghq.com/real_user_monitoring/session_replay/privacy_options?tab=maskuserinput#privacy-options). Specifically, you should replace:
-
-- `dd-privacy-input-ignored` and `dd-privacy-input-masked` class names with `dd-privacy-mask-user-input`
-
-- `dd-privacy="input-masked"` and `dd-privacy="input-ignored"` attribute values with `dd-privacy="mask-user-input"`
-
-### [RUM Session Replay] Clarify same node privacy precedence
-
-When multiple privacy options are specified on the same element, we now apply the most restrictive
-one to avoid unexpectedly leaking privacy (ex: if both `dd-privacy-allow` and `dd-privacy-hidden`
-classes are specified on the same element, we now consider it `hidden` instead of `allow`).
-
-### [RUM] Remove text from elements with programmatic action names when computing a parent action names
-
-When computing automatic [actions target name](https://docs.datadoghq.com/real_user_monitoring/browser/tracking_user_actions/?tab=npm#action-attributes) on elements without `data-dd-action-name` attribute, we are using the "inner text" of this element. If it contains some elements that specify `data-dd-action-name`, their text is now removed inside the ancestor inner text.
-
-This might slightly change automatic action names shown in the Datadog App.
+See our [upgrade guide](https://docs.datadoghq.com/real_user_monitoring/guide/browser-sdk-upgrade/#from-v3-to-v4) for a comprehensive list of breaking changes introduced by this major version.
 
 ### Changes
 
@@ -278,43 +596,7 @@ Note: this is the first 3.x release for the Logs SDK. See migration notes in [v3
 
 ## v3.0.0
 
-Here is the list of all the breaking changes between version 2 and 3 of the RUM and Logs SDKs.
-
-For each change, we show the new way to handle your use case.
-
-### [RUM] Network errors no longer monitored
-
-RUM browser SDK no longer automatically monitors network errors.
-
-**New option**: You can use the option beforeSend to get the resource, check the `status` and send it with the `addError()` API.
-
-### [RUM] Source attribute of addError() has been removed
-
-You can no longer change the source of error sent with `addError()`. All these errors have a `custom` source.
-
-**New option**: If you used this feature to identify `network` and `source` errors, you can add context attributes with `addError()` instead.
-
-### [RUM and Logs] Removed typescript types
-
-| Old types                    | New types                    |
-| ---------------------------- | ---------------------------- |
-| RumUserConfiguration         | RumInitConfiguration         |
-| RumRecorderUserConfiguration | RumRecorderInitConfiguration |
-| LogsUserConfiguration        | LogsInitConfiguration        |
-
-### [RUM and Logs] Removed init options
-
-| Old options        | New options |
-| ------------------ | ----------- |
-| publicApiKey       | clientToken |
-| datacenter         | site        |
-| resourceSampleRate | NONE        |
-
-### [RUM] Removed API
-
-| Old API       | New API   |
-| ------------- | --------- |
-| addUserAction | addAction |
+See our [upgrade guide](https://docs.datadoghq.com/real_user_monitoring/guide/browser-sdk-upgrade/#from-v2-to-v3) for a comprehensive list of breaking changes introduced by this major version.
 
 ### Changes
 

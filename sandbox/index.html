@@ -9,11 +9,19 @@
       DD_RUM.init({
         clientToken: 'xxx',
         applicationId: 'xxx',
-        internalMonitoringApiKey: 'xxx',
+        sessionReplaySampleRate: 100,
+        trackResources: true,
+        trackLongTasks: true,
+        telemetrySampleRate: 100,
+        telemetryConfigurationSampleRate: 100,
+        enableExperimentalFeatures: [],
       })
+      DD_RUM.startSessionReplayRecording()
       DD_LOGS.init({
         clientToken: 'xxx',
-        internalMonitoringApiKey: 'xxx',
+        telemetrySampleRate: 100,
+        telemetryConfigurationSampleRate: 100,
+        enableExperimentalFeatures: [],
       })
     </script>
   </head>

@@ -1,13 +1,7 @@
-import {
-  display,
-  isIE,
-  MonitoringMessage,
-  noop,
-  resetInternalMonitoring,
-  startFakeInternalMonitoring,
-} from '@datadog/browser-core'
+import type { RawTelemetryEvent } from '@datadog/browser-core'
+import { display, isIE, noop, resetTelemetry, startFakeTelemetry } from '@datadog/browser-core'
 import { MockWorker } from '../../../test/utils'
-import { createDeflateWorker } from './deflateWorker'
+import type { createDeflateWorker } from './deflateWorker'
 import { startDeflateWorker, resetDeflateWorkerState } from './startDeflateWorker'
 
 describe('startDeflateWorker', () => {
@@ -61,7 +55,7 @@ describe('startDeflateWorker', () => {
   })
 
   describe('worker CSP error', () => {
-    let internalMonitoringMessages: MonitoringMessage[]
+    let telemetryEvents: RawTelemetryEvent[]
     // mimic Chrome behavior
     let CSP_ERROR: DOMException
     let displaySpy: jasmine.Spy
@@ -71,14 +65,14 @@ describe('startDeflateWorker', () => {
         pending('IE does not support CSP blocking worker creation')
       }
       displaySpy = spyOn(display, 'error')
-      internalMonitoringMessages = startFakeInternalMonitoring()
+      telemetryEvents = startFakeTelemetry()
       CSP_ERROR = new DOMException(
         "Failed to construct 'Worker': Access to the script at 'blob:https://example.org/9aadbb61-effe-41ee-aa76-fc607053d642' is denied by the document's Content Security Policy."
       )
     })
 
     afterEach(() => {
-      resetInternalMonitoring()
+      resetTelemetry()
     })
 
     it('displays CSP instructions when the worker creation throws a CSP error', () => {
@@ -90,11 +84,11 @@ describe('startDeflateWorker', () => {
       )
     })
 
-    it('does not report CSP errors to internal monitoring', () => {
+    it('does not report CSP errors to telemetry', () => {
       startDeflateWorker(noop, () => {
         throw CSP_ERROR
       })
-      expect(internalMonitoringMessages).toEqual([])
+      expect(telemetryEvents).toEqual([])
     })
 
     it('displays ErrorEvent as CSP error', () => {
@@ -120,17 +114,17 @@ describe('startDeflateWorker', () => {
   })
 
   describe('worker unknown error', () => {
-    let internalMonitoringMessages: MonitoringMessage[]
+    let telemetryEvents: RawTelemetryEvent[]
     const UNKNOWN_ERROR = new Error('boom')
     let displaySpy: jasmine.Spy
 
     beforeEach(() => {
       displaySpy = spyOn(display, 'error')
-      internalMonitoringMessages = startFakeInternalMonitoring()
+      telemetryEvents = startFakeTelemetry()
     })
 
     afterEach(() => {
-      resetInternalMonitoring()
+      resetTelemetry()
     })
 
     it('displays an error message when the worker creation throws an unknown error', () => {
@@ -143,12 +137,17 @@ describe('startDeflateWorker', () => {
       )
     })
 
-    it('reports unknown errors to internal monitoring', () => {
+    it('reports unknown errors to telemetry', () => {
       startDeflateWorker(noop, () => {
         throw UNKNOWN_ERROR
       })
-      expect(internalMonitoringMessages).toEqual([
-        { status: 'error' as any, message: 'boom', error: { kind: 'Error', stack: jasmine.any(String) } },
+      expect(telemetryEvents).toEqual([
+        {
+          type: 'log',
+          status: 'error',
+          message: 'boom',
+          error: { kind: 'Error', stack: jasmine.any(String) },
+        },
       ])
     })
 
@@ -160,13 +159,18 @@ describe('startDeflateWorker', () => {
       )
     })
 
-    it('reports errors occurring after loading to internal monitoring', () => {
+    it('reports errors occurring after loading to telemetry', () => {
       startDeflateWorker(noop, createDeflateWorkerSpy)
       deflateWorker.processAllMessages()
 
       deflateWorker.dispatchErrorMessage('boom')
-      expect(internalMonitoringMessages).toEqual([
-        { status: 'error' as any, message: 'Uncaught "boom"', error: { stack: jasmine.any(String) } },
+      expect(telemetryEvents).toEqual([
+        {
+          type: 'log',
+          status: 'error',
+          message: 'Uncaught "boom"',
+          error: { stack: jasmine.any(String) },
+        },
       ])
     })
   })

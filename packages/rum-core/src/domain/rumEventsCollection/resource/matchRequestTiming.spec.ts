@@ -1,7 +1,8 @@
-import { Duration, isIE, RelativeTime, relativeToClocks } from '@datadog/browser-core'
+import type { Duration, RelativeTime } from '@datadog/browser-core'
+import { isIE, relativeToClocks } from '@datadog/browser-core'
 import { createResourceEntry } from '../../../../test/fixtures'
-import { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
-import { RequestCompleteEvent } from '../../requestCollection'
+import type { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
+import type { RequestCompleteEvent } from '../../requestCollection'
 
 import { matchRequestTiming } from './matchRequestTiming'
 
@@ -17,7 +18,7 @@ describe('matchRequestTiming', () => {
       pending('no full rum support')
     }
     entries = []
-    spyOn(performance, 'getEntriesByName').and.returnValues((entries as unknown) as PerformanceResourceTiming[])
+    spyOn(performance, 'getEntriesByName').and.returnValues(entries as unknown as PerformanceResourceTiming[])
   })
 
   it('should match single timing nested in the request ', () => {
@@ -45,16 +46,6 @@ describe('matchRequestTiming', () => {
     const timing = matchRequestTiming(FAKE_REQUEST as RequestCompleteEvent)
 
     expect(timing).toEqual(undefined)
-  })
-
-  it('should match two following timings nested in the request ', () => {
-    const optionsTiming = createResourceEntry({ startTime: 150 as RelativeTime, duration: 50 as Duration })
-    const actualTiming = createResourceEntry({ startTime: 200 as RelativeTime, duration: 100 as Duration })
-    entries.push(optionsTiming, actualTiming)
-
-    const timing = matchRequestTiming(FAKE_REQUEST as RequestCompleteEvent)
-
-    expect(timing).toEqual(actualTiming)
   })
 
   it('should not match two not following timings nested in the request ', () => {

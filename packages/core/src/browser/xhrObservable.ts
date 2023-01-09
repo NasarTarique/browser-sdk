@@ -1,8 +1,10 @@
-import { monitor } from '../domain/internalMonitoring'
 import { instrumentMethodAndCallOriginal } from '../tools/instrumentMethod'
+import { monitor } from '../tools/monitor'
 import { Observable } from '../tools/observable'
-import { Duration, elapsed, relativeNow, RelativeTime, ClocksState, clocksNow, timeStampNow } from '../tools/timeUtils'
+import type { Duration, RelativeTime, ClocksState } from '../tools/timeUtils'
+import { elapsed, relativeNow, clocksNow, timeStampNow } from '../tools/timeUtils'
 import { normalizeUrl } from '../tools/urlPolyfill'
+import { shallowClone } from '../tools/utils'
 
 export interface XhrOpenContext {
   state: 'open'
@@ -22,7 +24,6 @@ export interface XhrCompleteContext extends Omit<XhrStartContext, 'state'> {
   state: 'complete'
   duration: Duration
   status: number
-  responseText: string | undefined
 }
 
 export type XhrContext = XhrOpenContext | XhrStartContext | XhrCompleteContext
@@ -62,11 +63,11 @@ function createXhrObservable() {
   return observable
 }
 
-function openXhr(this: XMLHttpRequest, method: string, url: string) {
+function openXhr(this: XMLHttpRequest, method: string, url: string | URL | undefined | null) {
   xhrContexts.set(this, {
     state: 'open',
     method,
-    url: normalizeUrl(url),
+    url: normalizeUrl(String(url)),
   })
 }
 
@@ -108,9 +109,8 @@ function sendXhr(this: XMLHttpRequest, observable: Observable<XhrContext>) {
     const completeContext = context as XhrCompleteContext
     completeContext.state = 'complete'
     completeContext.duration = elapsed(startContext.startClocks.timeStamp, timeStampNow())
-    completeContext.responseText = this.response as string | undefined
     completeContext.status = this.status
-    observable.notify({ ...completeContext })
+    observable.notify(shallowClone(completeContext))
   })
   this.addEventListener('loadend', onEnd)
   observable.notify(startContext)

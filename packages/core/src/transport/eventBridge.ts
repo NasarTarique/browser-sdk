@@ -1,4 +1,4 @@
-import { includes, isExperimentalFeatureEnabled } from '..'
+import { endsWith, getGlobalObject } from '../tools/utils'
 
 export interface BrowserWindowWithEventBridge extends Window {
   DatadogEventBridge?: DatadogEventBridge
@@ -26,14 +26,16 @@ export function getEventBridge<T, E>() {
   }
 }
 
-export function canUseEventBridge(): boolean {
+export function canUseEventBridge(currentHost = getGlobalObject<Window>().location?.hostname): boolean {
   const bridge = getEventBridge()
-
-  return !!bridge && includes(bridge.getAllowedWebViewHosts(), window.location.hostname)
+  return (
+    !!bridge &&
+    bridge
+      .getAllowedWebViewHosts()
+      .some((allowedHost) => currentHost === allowedHost || endsWith(currentHost, `.${allowedHost}`))
+  )
 }
 
 function getEventBridgeGlobal() {
-  return isExperimentalFeatureEnabled('event-bridge')
-    ? (window as BrowserWindowWithEventBridge).DatadogEventBridge
-    : null
+  return getGlobalObject<BrowserWindowWithEventBridge>().DatadogEventBridge
 }

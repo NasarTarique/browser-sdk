@@ -1,6 +1,7 @@
-import { Duration, RelativeTime } from '@datadog/browser-core'
-import { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
-import { RequestCompleteEvent } from '../../requestCollection'
+import type { Duration, RelativeTime } from '@datadog/browser-core'
+import { addDuration } from '@datadog/browser-core'
+import type { RumPerformanceResourceTiming } from '../../../browser/performanceCollection'
+import type { RequestCompleteEvent } from '../../requestCollection'
 import { toValidEntry } from './resourceUtils'
 
 interface Timing {
@@ -14,12 +15,10 @@ interface Timing {
  * Observations:
  * - Timing (start, end) are nested inside the request (start, end)
  * - Some timing can be not exactly nested, being off by < 1 ms
- * - Browsers generate a timing entry for OPTIONS request
  *
  * Strategy:
  * - from valid nested entries (with 1 ms error margin)
  * - if a single timing match, return the timing
- * - if two following timings match (OPTIONS request), return the timing for the actual request
  * - otherwise we can't decide, return undefined
  */
 export function matchRequestTiming(request: RequestCompleteEvent) {
@@ -47,24 +46,14 @@ export function matchRequestTiming(request: RequestCompleteEvent) {
     return candidates[0]
   }
 
-  if (candidates.length === 2 && firstCanBeOptionRequest(candidates)) {
-    return candidates[1]
-  }
-
   return
 }
 
-function firstCanBeOptionRequest(correspondingEntries: RumPerformanceResourceTiming[]) {
-  return endTime(correspondingEntries[0]) <= correspondingEntries[1].startTime
-}
-
 function endTime(timing: Timing) {
-  // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-  return (timing.startTime + timing.duration) as RelativeTime
+  return addDuration(timing.startTime, timing.duration)
 }
 
 function isBetween(timing: Timing, start: RelativeTime, end: RelativeTime) {
-  const errorMargin = 1
-  // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-  return timing.startTime >= start - errorMargin && endTime(timing) <= end + errorMargin
+  const errorMargin = 1 as Duration
+  return timing.startTime >= start - errorMargin && endTime(timing) <= addDuration(end, errorMargin)
 }

@@ -1,16 +1,16 @@
 import { canUseEventBridge, noop, runOnReadyState } from '@datadog/browser-core'
-import {
-  LifeCycleEventType,
+import type {
   LifeCycle,
-  ParentContexts,
+  ViewContexts,
   RumSessionManager,
   RecorderApi,
   RumConfiguration,
 } from '@datadog/browser-rum-core'
+import { LifeCycleEventType } from '@datadog/browser-rum-core'
 import { getReplayStats } from '../domain/replayStats'
 import { startDeflateWorker } from '../domain/segmentCollection'
 
-import { startRecording } from './startRecording'
+import type { startRecording } from './startRecording'
 
 export type StartRecording = typeof startRecording
 
@@ -44,7 +44,7 @@ export function makeRecorderApi(
   startRecordingImpl: StartRecording,
   startDeflateWorkerImpl = startDeflateWorker
 ): RecorderApi {
-  if (canUseEventBridge()) {
+  if (canUseEventBridge() || !isBrowserSupported()) {
     return {
       start: noop,
       stop: noop,
@@ -73,7 +73,7 @@ export function makeRecorderApi(
       lifeCycle: LifeCycle,
       configuration: RumConfiguration,
       sessionManager: RumSessionManager,
-      parentContexts: ParentContexts
+      viewContexts: ViewContexts
     ) => {
       lifeCycle.subscribe(LifeCycleEventType.SESSION_EXPIRED, () => {
         if (state.status === RecorderStatus.Starting || state.status === RecorderStatus.Started) {
@@ -90,7 +90,7 @@ export function makeRecorderApi(
 
       startStrategy = () => {
         const session = sessionManager.findTrackedSession()
-        if (!session || !session.hasReplayPlan) {
+        if (!session || !session.sessionReplayAllowed) {
           state = { status: RecorderStatus.IntentToStart }
           return
         }
@@ -122,7 +122,7 @@ export function makeRecorderApi(
               lifeCycle,
               configuration,
               sessionManager,
-              parentContexts,
+              viewContexts,
               worker
             )
             state = {
@@ -154,4 +154,16 @@ export function makeRecorderApi(
 
     isRecording: () => state.status === RecorderStatus.Started,
   }
+}
+
+/**
+ * Test for Browser features used while recording
+ */
+function isBrowserSupported() {
+  return (
+    // Array.from is a bit less supported by browsers than CSSSupportsRule, but has higher chances
+    // to be polyfilled. Test for both to be more confident. We could add more things if we find out
+    // this test is not sufficient.
+    typeof Array.from === 'function' && typeof CSSSupportsRule === 'function'
+  )
 }

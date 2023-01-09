@@ -1,63 +1,83 @@
-import { DOM_EVENT, isIE } from '@datadog/browser-core'
-import { LifeCycle, LifeCycleEventType, ParentContexts, ViewContext } from '@datadog/browser-rum-core'
-import {
-  Clock,
-  createNewEvent,
-  mockClock,
-  restorePageVisibility,
-  setPageVisibility,
-} from '@datadog/browser-core/test/specHelper'
+import type { HttpRequest, TimeStamp } from '@datadog/browser-core'
+import { PageExitReason, isIE } from '@datadog/browser-core'
+import type { ViewContexts, ViewContext } from '@datadog/browser-rum-core'
+import { LifeCycle, LifeCycleEventType } from '@datadog/browser-rum-core'
+import type { Clock } from '@datadog/browser-core/test/specHelper'
+import { mockClock, restorePageVisibility } from '@datadog/browser-core/test/specHelper'
 import { createRumSessionManagerMock } from '../../../../rum-core/test/mockRumSessionManager'
-import { Record, RecordType, SegmentContext, SegmentMeta } from '../../types'
+import type { BrowserRecord, SegmentContext } from '../../types'
+import { RecordType } from '../../types'
 import { MockWorker } from '../../../test/utils'
-import { SEND_BEACON_BYTE_LENGTH_LIMIT } from '../../transport/send'
-import { computeSegmentContext, doStartSegmentCollection, MAX_SEGMENT_DURATION } from './segmentCollection'
+import {
+  computeSegmentContext,
+  doStartSegmentCollection,
+  SEGMENT_BYTES_LIMIT,
+  SEGMENT_DURATION_LIMIT,
+} from './segmentCollection'
 
 const CONTEXT: SegmentContext = { application: { id: 'a' }, view: { id: 'b' }, session: { id: 'c' } }
-const RECORD: Record = { type: RecordType.ViewEnd, timestamp: 10 }
+const RECORD: BrowserRecord = { type: RecordType.ViewEnd, timestamp: 10 as TimeStamp }
 
-// A record that will make the segment size reach the SEND_BEACON_BYTE_LENGTH_LIMIT limit
-const VERY_BIG_RECORD: Record = {
+// A record that will make the segment size reach the SEGMENT_BYTES_LIMIT
+const VERY_BIG_RECORD: BrowserRecord = {
   type: RecordType.FullSnapshot,
-  timestamp: 10,
-  data: Array(SEND_BEACON_BYTE_LENGTH_LIMIT).join('a') as any,
+  timestamp: 10 as TimeStamp,
+  data: Array(SEGMENT_BYTES_LIMIT).join('a') as any,
 }
 
-const BEFORE_MAX_SEGMENT_DURATION = MAX_SEGMENT_DURATION * 0.9
+const BEFORE_SEGMENT_DURATION_LIMIT = SEGMENT_DURATION_LIMIT * 0.9
 
 describe('startSegmentCollection', () => {
   let stopSegmentCollection: () => void
-  let clock: Clock | undefined
+  let clock: Clock
+  let lifeCycle: LifeCycle
+  let worker: MockWorker
+  let httpRequestSpy: {
+    sendOnExit: jasmine.Spy<HttpRequest['sendOnExit']>
+    send: jasmine.Spy<HttpRequest['send']>
+  }
+  let addRecord: (record: BrowserRecord) => void
+  let context: SegmentContext | undefined
 
-  function startSegmentCollection(context: SegmentContext | undefined) {
-    const lifeCycle = new LifeCycle()
-    const worker = new MockWorker()
-    const eventEmitter = document.createElement('div')
-    const sendSpy = jasmine.createSpy<(data: Uint8Array, meta: SegmentMeta) => void>()
+  function addRecordAndFlushSegment(flushStrategy: () => void = emulatePageUnload) {
+    // Make sure the segment is not empty
+    addRecord(RECORD)
+    // Flush segment
+    flushStrategy()
+    worker.processAllMessages()
+  }
 
-    const { stop, addRecord } = doStartSegmentCollection(lifeCycle, () => context, sendSpy, worker, eventEmitter)
-    stopSegmentCollection = stop
-    return {
-      addRecord,
-      eventEmitter,
-      lifeCycle,
-      sendSpy,
-      worker,
-      sendCurrentSegment: () => {
-        // Make sure the segment is not empty
-        addRecord(RECORD)
-        // Flush segment
-        lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
-        worker.processAllMessages()
-        return sendSpy.calls.mostRecent().args[1]
-      },
+  function emulatePageUnload() {
+    lifeCycle.notify(LifeCycleEventType.PAGE_EXITED, { reason: PageExitReason.UNLOADING })
+  }
+
+  function getSentFormData(spy: jasmine.Spy<HttpRequest['send']>) {
+    const payload = spy.calls.mostRecent().args[0]
+
+    if (!(payload.data instanceof FormData)) {
+      throw new Error('SegmentCollection unexpectedly sent a payload without FormData')
     }
+
+    return payload.data
   }
 
   beforeEach(() => {
     if (isIE()) {
       pending('IE not supported')
     }
+    lifeCycle = new LifeCycle()
+    worker = new MockWorker()
+    httpRequestSpy = {
+      sendOnExit: jasmine.createSpy(),
+      send: jasmine.createSpy(),
+    }
+    context = CONTEXT
+    ;({ stop: stopSegmentCollection, addRecord } = doStartSegmentCollection(
+      lifeCycle,
+      () => context,
+      httpRequestSpy,
+      worker
+    ))
   })
 
   afterEach(() => {
@@ -65,31 +85,35 @@ describe('startSegmentCollection', () => {
     stopSegmentCollection()
   })
 
-  it('immediately starts a new segment', () => {
-    const { addRecord, worker, sendSpy, sendCurrentSegment } = startSegmentCollection(CONTEXT)
-    expect(worker.pendingData).toBe('')
-    addRecord(RECORD)
-    expect(worker.pendingData).toBe('{"records":[{"type":7,"timestamp":10}')
-    worker.processAllMessages()
-    expect(sendSpy).not.toHaveBeenCalled()
-    expect(sendCurrentSegment().creation_reason).toBe('init')
+  describe('initial segment', () => {
+    it('immediately starts a new segment', () => {
+      expect(worker.pendingData).toBe('')
+      addRecord(RECORD)
+      expect(worker.pendingData).toBe('{"records":[{"type":7,"timestamp":10}')
+      worker.processAllMessages()
+      expect(httpRequestSpy.send).not.toHaveBeenCalled()
+      expect(httpRequestSpy.sendOnExit).not.toHaveBeenCalled()
+    })
+
+    it('creation reason should reflect that it is the initial segment', () => {
+      addRecordAndFlushSegment()
+      expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('init')
+    })
   })
 
   it('sends a segment', () => {
-    const { lifeCycle, worker, sendSpy, addRecord } = startSegmentCollection(CONTEXT)
-    addRecord(RECORD)
-    lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
-    worker.processAllMessages()
-    expect(sendSpy).toHaveBeenCalledTimes(1)
+    addRecordAndFlushSegment()
+    expect(httpRequestSpy.sendOnExit).toHaveBeenCalledTimes(1)
   })
 
   it("ignores calls to addRecord if context can't be get", () => {
-    const { lifeCycle, worker, sendSpy, addRecord } = startSegmentCollection(undefined)
+    context = undefined
     addRecord(RECORD)
-    lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
+    emulatePageUnload()
     expect(worker.pendingData).toBe('')
     worker.processAllMessages()
-    expect(sendSpy).not.toHaveBeenCalled()
+    expect(httpRequestSpy.send).not.toHaveBeenCalled()
+    expect(httpRequestSpy.sendOnExit).not.toHaveBeenCalled()
   })
 
   describe('segment flush strategy', () => {
@@ -98,75 +122,94 @@ describe('startSegmentCollection', () => {
     })
 
     it('does not flush empty segments', () => {
-      const { lifeCycle, sendSpy, worker } = startSegmentCollection(CONTEXT)
-      lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
+      emulatePageUnload()
       worker.processAllMessages()
-      expect(sendSpy).not.toHaveBeenCalled()
+      expect(httpRequestSpy.send).not.toHaveBeenCalled()
+      expect(httpRequestSpy.sendOnExit).not.toHaveBeenCalled()
     })
 
-    it('flushes segment on unload', () => {
-      const { lifeCycle, sendCurrentSegment } = startSegmentCollection(CONTEXT)
-      lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
-      expect(sendCurrentSegment().creation_reason).toBe('before_unload')
+    describe('flush when the page exits because it is unloading', () => {
+      it('uses `httpRequest.sendOnExit` when sending the segment', () => {
+        addRecordAndFlushSegment(emulatePageUnload)
+        expect(httpRequestSpy.sendOnExit).toHaveBeenCalled()
+      })
+
+      it('next segment is created because of beforeunload event', () => {
+        addRecordAndFlushSegment(emulatePageUnload)
+        addRecordAndFlushSegment()
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('before_unload')
+      })
     })
 
-    it('flushes segment on view change', () => {
-      const { lifeCycle, sendCurrentSegment } = startSegmentCollection(CONTEXT)
-      lifeCycle.notify(LifeCycleEventType.VIEW_CREATED, {} as any)
-      expect(sendCurrentSegment().creation_reason).toBe('view_change')
+    describe('flush when the page exits because it gets hidden', () => {
+      function emulatePageHidden() {
+        lifeCycle.notify(LifeCycleEventType.PAGE_EXITED, { reason: PageExitReason.HIDDEN })
+      }
+
+      it('uses `httpRequest.sendOnExit` when sending the segment', () => {
+        addRecordAndFlushSegment(emulatePageHidden)
+        expect(httpRequestSpy.sendOnExit).toHaveBeenCalled()
+      })
+
+      it('next segment is created because of visibility hidden event', () => {
+        addRecordAndFlushSegment(emulatePageHidden)
+        addRecordAndFlushSegment()
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('visibility_hidden')
+      })
     })
 
-    it('flushes segment when the page become hidden', () => {
-      setPageVisibility('hidden')
-      const { addRecord, eventEmitter, sendCurrentSegment, worker, sendSpy } = startSegmentCollection(CONTEXT)
-      addRecord(RECORD)
-      eventEmitter.dispatchEvent(createNewEvent(DOM_EVENT.VISIBILITY_CHANGE))
+    describe('flush when the view changes', () => {
+      function emulateViewChange() {
+        lifeCycle.notify(LifeCycleEventType.VIEW_CREATED, {} as any)
+      }
 
-      worker.processAllMessages()
-      expect(sendSpy).toHaveBeenCalledTimes(1)
-      expect(sendCurrentSegment().creation_reason).toBe('visibility_hidden')
+      it('uses `httpRequest.send` when sending the segment', () => {
+        addRecordAndFlushSegment(emulateViewChange)
+        expect(httpRequestSpy.send).toHaveBeenCalled()
+      })
+
+      it('next segment is created because of view change', () => {
+        addRecordAndFlushSegment(emulateViewChange)
+        addRecordAndFlushSegment()
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('view_change')
+      })
     })
 
-    it('does not flush segment when the page become visible', () => {
-      setPageVisibility('visible')
-      const { addRecord, eventEmitter, sendCurrentSegment, worker, sendSpy } = startSegmentCollection(CONTEXT)
-      addRecord(RECORD)
-      eventEmitter.dispatchEvent(createNewEvent(DOM_EVENT.VISIBILITY_CHANGE))
+    describe('flush when reaching a bytes limit', () => {
+      it('uses `httpRequest.send` when sending the segment', () => {
+        addRecordAndFlushSegment(() => {
+          addRecord(VERY_BIG_RECORD)
+        })
+        expect(httpRequestSpy.send).toHaveBeenCalled()
+      })
 
-      worker.processAllMessages()
-      expect(sendSpy).not.toHaveBeenCalled()
-      expect(sendCurrentSegment().creation_reason).not.toBe('visibility_hidden')
-    })
+      it('next segment is created because the bytes limit has been reached', () => {
+        addRecordAndFlushSegment(() => {
+          addRecord(VERY_BIG_RECORD)
+        })
+        addRecordAndFlushSegment()
 
-    describe('max_size flush strategy', () => {
-      it('flushes segment when the current segment deflate size reaches SEND_BEACON_BYTE_LENGTH_LIMIT', () => {
-        const { worker, addRecord, sendCurrentSegment } = startSegmentCollection(CONTEXT)
-        addRecord(VERY_BIG_RECORD)
-        worker.processAllMessages()
-
-        expect(sendCurrentSegment().creation_reason).toBe('max_size')
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('segment_bytes_limit')
       })
 
       it('continues to add records to the current segment while the worker is processing messages', () => {
-        const { worker, addRecord, sendSpy } = startSegmentCollection(CONTEXT)
         addRecord(VERY_BIG_RECORD)
         addRecord(RECORD)
         addRecord(RECORD)
         addRecord(RECORD)
         worker.processAllMessages()
 
-        expect(sendSpy).toHaveBeenCalledTimes(1)
-        expect(sendSpy.calls.mostRecent().args[1].records_count).toBe(4)
+        expect(httpRequestSpy.send).toHaveBeenCalledTimes(1)
+        expect(getSentFormData(httpRequestSpy.send).get('records_count')).toBe('4')
       })
 
       it('does not flush segment prematurely when records from the previous segment are still being processed', () => {
-        const { worker, addRecord, sendSpy } = startSegmentCollection(CONTEXT)
         // Add two records to the current segment
         addRecord(VERY_BIG_RECORD)
         addRecord(RECORD)
 
         // Process only the first record. This should flush the current segment because it reached
-        // the max_size limit.
+        // the segment bytes limit.
         worker.processNextMessage()
 
         // Add a record to the new segment, to make sure it is not flushed even if it is not empty
@@ -174,56 +217,59 @@ describe('startSegmentCollection', () => {
 
         worker.processAllMessages()
 
-        expect(sendSpy).toHaveBeenCalledTimes(1)
-        expect(sendSpy.calls.mostRecent().args[1].records_count).toBe(2)
+        expect(httpRequestSpy.send).toHaveBeenCalledTimes(1)
+        expect(getSentFormData(httpRequestSpy.send).get('records_count')).toBe('2')
       })
     })
 
-    describe('max_duration flush strategy', () => {
-      it('flushes a segment after MAX_SEGMENT_DURATION', () => {
+    describe('flush when a duration has been reached', () => {
+      it('uses `httpRequest.send` when sending the segment', () => {
         clock = mockClock()
-        const { sendCurrentSegment, addRecord, sendSpy, worker } = startSegmentCollection(CONTEXT)
-        addRecord(RECORD)
-        clock.tick(MAX_SEGMENT_DURATION)
-        worker.processAllMessages()
-        expect(sendSpy).toHaveBeenCalledTimes(1)
-        expect(sendCurrentSegment().creation_reason).toBe('max_duration')
+        addRecordAndFlushSegment(() => {
+          clock!.tick(SEGMENT_DURATION_LIMIT)
+        })
+        expect(httpRequestSpy.send).toHaveBeenCalled()
       })
 
-      it('does not flush a segment after MAX_SEGMENT_DURATION if a segment has been created in the meantime', () => {
+      it('next segment is created because of the segment duration limit has been reached', () => {
         clock = mockClock()
-        const { lifeCycle, sendCurrentSegment, addRecord, sendSpy, worker } = startSegmentCollection(CONTEXT)
+        addRecordAndFlushSegment(() => {
+          clock!.tick(SEGMENT_DURATION_LIMIT)
+        })
+        addRecordAndFlushSegment()
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).toBe('segment_duration_limit')
+      })
+
+      it('does not flush a segment after SEGMENT_DURATION_LIMIT if a segment has been created in the meantime', () => {
+        clock = mockClock()
         addRecord(RECORD)
-        clock.tick(BEFORE_MAX_SEGMENT_DURATION)
-        lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
+        clock.tick(BEFORE_SEGMENT_DURATION_LIMIT)
+        emulatePageUnload()
         addRecord(RECORD)
-        clock.tick(BEFORE_MAX_SEGMENT_DURATION)
+        clock.tick(BEFORE_SEGMENT_DURATION_LIMIT)
 
         worker.processAllMessages()
-        expect(sendSpy).toHaveBeenCalledTimes(1)
-        expect(sendCurrentSegment().creation_reason).not.toBe('max_duration')
+        expect(httpRequestSpy.sendOnExit).toHaveBeenCalledTimes(1)
+        addRecordAndFlushSegment()
+        expect(getSentFormData(httpRequestSpy.sendOnExit).get('creation_reason')).not.toBe('segment_duration_limit')
       })
     })
 
-    it('flushes a segment when calling stop()', () => {
-      const { addRecord, worker, sendSpy } = startSegmentCollection(CONTEXT)
-      addRecord(RECORD)
-      stopSegmentCollection()
-      worker.processAllMessages()
-      expect(sendSpy).toHaveBeenCalledTimes(1)
+    describe('flush when stopping segment collection', () => {
+      it('uses `httpRequest.send` when sending the segment', () => {
+        addRecordAndFlushSegment(stopSegmentCollection)
+        expect(httpRequestSpy.send).toHaveBeenCalled()
+      })
     })
   })
 })
 
 describe('computeSegmentContext', () => {
-  const DEFAULT_VIEW_CONTEXT: ViewContext = {
-    view: { id: '123' },
-  }
-
+  const DEFAULT_VIEW_CONTEXT: ViewContext = { id: '123', documentVersion: 0 }
   const DEFAULT_SESSION = createRumSessionManagerMock().setId('456')
 
   it('returns a segment context', () => {
-    expect(computeSegmentContext('appid', DEFAULT_SESSION, mockParentContexts(DEFAULT_VIEW_CONTEXT))).toEqual({
+    expect(computeSegmentContext('appid', DEFAULT_SESSION, mockViewContexts(DEFAULT_VIEW_CONTEXT))).toEqual({
       application: { id: 'appid' },
       session: { id: '456' },
       view: { id: '123' },
@@ -231,7 +277,7 @@ describe('computeSegmentContext', () => {
   })
 
   it('returns undefined if there is no current view', () => {
-    expect(computeSegmentContext('appid', DEFAULT_SESSION, mockParentContexts(undefined))).toBeUndefined()
+    expect(computeSegmentContext('appid', DEFAULT_SESSION, mockViewContexts(undefined))).toBeUndefined()
   })
 
   it('returns undefined if the session is not tracked', () => {
@@ -239,12 +285,12 @@ describe('computeSegmentContext', () => {
       computeSegmentContext(
         'appid',
         createRumSessionManagerMock().setNotTracked(),
-        mockParentContexts(DEFAULT_VIEW_CONTEXT)
+        mockViewContexts(DEFAULT_VIEW_CONTEXT)
       )
     ).toBeUndefined()
   })
 
-  function mockParentContexts(view: ViewContext | undefined): ParentContexts {
+  function mockViewContexts(view: ViewContext | undefined): ViewContexts {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return {
       findView() {

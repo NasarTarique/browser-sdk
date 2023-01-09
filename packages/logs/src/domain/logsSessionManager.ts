@@ -1,5 +1,6 @@
-import { performDraw, startSessionManager, RelativeTime } from '@datadog/browser-core'
-import { LogsConfiguration } from './configuration'
+import type { RelativeTime } from '@datadog/browser-core'
+import { performDraw, startSessionManager } from '@datadog/browser-core'
+import type { LogsConfiguration } from './configuration'
 
 export const LOGS_SESSION_KEY = 'logs'
 
@@ -11,7 +12,7 @@ export type LogsSession = {
   id?: string // session can be tracked without id
 }
 
-export enum LoggerTrackingType {
+export const enum LoggerTrackingType {
   NOT_TRACKED = '0',
   TRACKED = '1',
 }
@@ -41,7 +42,7 @@ export function startLogsSessionManagerStub(configuration: LogsConfiguration): L
 }
 
 function computeTrackingType(configuration: LogsConfiguration) {
-  if (!performDraw(configuration.sampleRate)) {
+  if (!performDraw(configuration.sessionSampleRate)) {
     return LoggerTrackingType.NOT_TRACKED
   }
   return LoggerTrackingType.TRACKED

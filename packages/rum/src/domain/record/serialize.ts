@@ -1,3 +1,6 @@
+import { assign, isExperimentalFeatureEnabled, startsWith } from '@datadog/browser-core'
+import type { RumConfiguration } from '@datadog/browser-rum-core'
+import { isNodeShadowHost, isNodeShadowRoot, STABLE_ATTRIBUTES } from '@datadog/browser-rum-core'
 import {
   NodePrivacyLevel,
   PRIVACY_ATTR_NAME,
@@ -5,6 +8,17 @@ import {
   CENSORED_STRING_MARK,
   CENSORED_IMG_MARK,
 } from '../../constants'
+import type {
+  SerializedNode,
+  SerializedNodeWithId,
+  DocumentNode,
+  DocumentTypeNode,
+  ElementNode,
+  TextNode,
+  CDataNode,
+  DocumentFragmentNode,
+} from '../../types'
+import { NodeType } from '../../types'
 import {
   getTextContent,
   shouldMaskNode,
@@ -13,17 +27,16 @@ import {
   MAX_ATTRIBUTE_VALUE_CHAR_LENGTH,
 } from './privacy'
 import {
-  SerializedNode,
-  SerializedNodeWithId,
-  NodeType,
-  DocumentNode,
-  DocumentTypeNode,
-  ElementNode,
-  TextNode,
-  CDataNode,
-} from './types'
-import { getSerializedNodeId, setSerializedNodeId, getElementInputValue } from './serializationUtils'
+  getSerializedNodeId,
+  setSerializedNodeId,
+  getElementInputValue,
+  switchToAbsoluteUrl,
+  getStyleSheets,
+} from './serializationUtils'
 import { forEach } from './utils'
+import type { ElementsScrollPositions } from './elementsScrollPositions'
+import type { ShadowRootsController } from './shadowRootsController'
+import type { WithAdoptedStyleSheets } from './browser.types'
 
 // Those values are the only one that can be used when inheriting privacy levels from parent to
 // children during serialization, since HIDDEN and IGNORE shouldn't serialize their children. This
@@ -33,21 +46,46 @@ type ParentNodePrivacyLevel =
   | typeof NodePrivacyLevel.MASK
   | typeof NodePrivacyLevel.MASK_USER_INPUT
 
+export const enum SerializationContextStatus {
+  INITIAL_FULL_SNAPSHOT,
+  SUBSEQUENT_FULL_SNAPSHOT,
+  MUTATION,
+}
+
+export type SerializationContext =
+  | {
+      status: SerializationContextStatus.MUTATION
+      shadowRootsController: ShadowRootsController
+    }
+  | {
+      status: SerializationContextStatus.INITIAL_FULL_SNAPSHOT
+      elementsScrollPositions: ElementsScrollPositions
+      shadowRootsController: ShadowRootsController
+    }
+  | {
+      status: SerializationContextStatus.SUBSEQUENT_FULL_SNAPSHOT
+      elementsScrollPositions: ElementsScrollPositions
+      shadowRootsController: ShadowRootsController
+    }
+
 export interface SerializeOptions {
-  document: Document
   serializedNodeIds?: Set<number>
   ignoreWhiteSpace?: boolean
   parentNodePrivacyLevel: ParentNodePrivacyLevel
+  serializationContext: SerializationContext
+  configuration: RumConfiguration
 }
 
 export function serializeDocument(
   document: Document,
-  defaultPrivacyLevel: ParentNodePrivacyLevel
+  configuration: RumConfiguration,
+  serializationContext: SerializationContext
 ): SerializedNodeWithId {
   // We are sure that Documents are never ignored, so this function never returns null
   return serializeNodeWithId(document, {
-    document,
-    parentNodePrivacyLevel: defaultPrivacyLevel,
+    serializationContext,
+    parentNodePrivacyLevel: configuration.defaultPrivacyLevel,
+    configuration,
   })!
 }
 
@@ -72,6 +110,8 @@ function serializeNode(node: Node, options: SerializeOptions): SerializedNode | 
   switch (node.nodeType) {
     case node.DOCUMENT_NODE:
       return serializeDocumentNode(node as Document, options)
+    case node.DOCUMENT_FRAGMENT_NODE:
+      return serializeDocumentFragmentNode(node as DocumentFragment, options)
     case node.DOCUMENT_TYPE_NODE:
       return serializeDocumentTypeNode(node as DocumentType)
     case node.ELEMENT_NODE:
@@ -87,6 +127,7 @@ export function serializeDocumentNode(document: Document, options: SerializeOpti
   return {
     type: NodeType.Document,
     childNodes: serializeChildNodes(document, options),
+    adoptedStyleSheets: getStyleSheets((document as WithAdoptedStyleSheets).adoptedStyleSheets),
   }
 }
 
@@ -99,12 +140,36 @@ function serializeDocumentTypeNode(documentType: DocumentType): DocumentTypeNode
   }
 }
 
+function serializeDocumentFragmentNode(
+  element: DocumentFragment,
+  options: SerializeOptions
+): DocumentFragmentNode | undefined {
+  let childNodes: SerializedNodeWithId[] = []
+  if (element.childNodes.length) {
+    childNodes = serializeChildNodes(element, options)
+  }
+
+  const isShadowRoot = isNodeShadowRoot(element)
+  if (isShadowRoot) {
+    options.serializationContext.shadowRootsController.addShadowRoot(element)
+  }
+
+  return {
+    type: NodeType.DocumentFragment,
+    childNodes,
+    isShadowRoot,
+    adoptedStyleSheets: isShadowRoot
+      ? getStyleSheets((element as WithAdoptedStyleSheets).adoptedStyleSheets)
+      : undefined,
+  }
+}
+
 /**
- * Serialzing Element nodes involves capturing:
+ * Serializing Element nodes involves capturing:
  * 1. HTML ATTRIBUTES:
  * 2. JS STATE:
  * - scroll offsets
- * - Form fields (input value, checkbox checked, otpion selection, range)
+ * - Form fields (input value, checkbox checked, option selection, range)
  * - Canvas state,
  * - Media (video/audio) play mode + currentTime
  * - iframe contents
@@ -144,7 +209,7 @@ export function serializeElementNode(element: Element, options: SerializeOptions
     return
   }
 
-  const attributes = getAttributesForPrivacyLevel(element, nodePrivacyLevel)
+  const attributes = getAttributesForPrivacyLevel(element, nodePrivacyLevel, options)
 
   let childNodes: SerializedNodeWithId[] = []
   if (element.childNodes.length) {
@@ -155,13 +220,19 @@ export function serializeElementNode(element: Element, options: SerializeOptions
     if (options.parentNodePrivacyLevel === nodePrivacyLevel && options.ignoreWhiteSpace === (tagName === 'head')) {
       childNodesSerializationOptions = options
     } else {
-      childNodesSerializationOptions = {
-        ...options,
+      childNodesSerializationOptions = assign({}, options, {
         parentNodePrivacyLevel: nodePrivacyLevel,
         ignoreWhiteSpace: tagName === 'head',
-      }
+      })
     }
     childNodes = serializeChildNodes(element, childNodesSerializationOptions)
+  }
+
+  if (isNodeShadowHost(element) && isExperimentalFeatureEnabled('record_shadow_dom')) {
+    const shadowRoot = serializeNodeWithId(element.shadowRoot, options)
+    if (shadowRoot !== null) {
+      childNodes.push(shadowRoot)
+    }
   }
 
   return {
@@ -171,79 +242,6 @@ export function serializeElementNode(element: Element, options: SerializeOptions
     childNodes,
     isSVG,
   }
-}
-
-/**
- * TODO: Preserve CSS element order, and record the presence of the tag, just don't render
- * We don't need this logic on the recorder side.
- * For security related meta's, customer can mask themmanually given they
- * are easy to identify in the HEAD tag.
- */
-export function shouldIgnoreElement(element: Element): boolean {
-  if (element.nodeName === 'SCRIPT') {
-    return true
-  }
-
-  if (element.nodeName === 'LINK') {
-    const relAttribute = getLowerCaseAttribute('rel')
-    return (
-      // Scripts
-      (relAttribute === 'preload' && getLowerCaseAttribute('as') === 'script') ||
-      // Favicons
-      relAttribute === 'shortcut icon' ||
-      relAttribute === 'icon'
-    )
-  }
-
-  if (element.nodeName === 'META') {
-    const nameAttribute = getLowerCaseAttribute('name')
-    const relAttribute = getLowerCaseAttribute('rel')
-    const propertyAttribute = getLowerCaseAttribute('property')
-    return (
-      // Favicons
-      /^msapplication-tile(image|color)$/.test(nameAttribute) ||
-      nameAttribute === 'application-name' ||
-      relAttribute === 'icon' ||
-      relAttribute === 'apple-touch-icon' ||
-      relAttribute === 'shortcut icon' ||
-      // Description
-      nameAttribute === 'keywords' ||
-      nameAttribute === 'description' ||
-      // Social
-      /^(og|twitter|fb):/.test(propertyAttribute) ||
-      /^(og|twitter):/.test(nameAttribute) ||
-      nameAttribute === 'pinterest' ||
-      // Robots
-      nameAttribute === 'robots' ||
-      nameAttribute === 'googlebot' ||
-      nameAttribute === 'bingbot' ||
-      // Http headers. Ex: X-UA-Compatible, Content-Type, Content-Language, cache-control,
-      // X-Translated-By
-      element.hasAttribute('http-equiv') ||
-      // Authorship
-      nameAttribute === 'author' ||
-      nameAttribute === 'generator' ||
-      nameAttribute === 'framework' ||
-      nameAttribute === 'publisher' ||
-      nameAttribute === 'progid' ||
-      /^article:/.test(propertyAttribute) ||
-      /^product:/.test(propertyAttribute) ||
-      // Verification
-      nameAttribute === 'google-site-verification' ||
-      nameAttribute === 'yandex-verification' ||
-      nameAttribute === 'csrf-token' ||
-      nameAttribute === 'p:domain_verify' ||
-      nameAttribute === 'verify-v1' ||
-      nameAttribute === 'verification' ||
-      nameAttribute === 'shopify-checkout-api-token'
-    )
-  }
-
-  function getLowerCaseAttribute(name: string) {
-    return (element.getAttribute(name) || '').toLowerCase()
-  }
-
-  return false
 }
 
 /**
@@ -275,34 +273,39 @@ function serializeCDataNode(): CDataNode {
 
 export function serializeChildNodes(node: Node, options: SerializeOptions): SerializedNodeWithId[] {
   const result: SerializedNodeWithId[] = []
-
   forEach(node.childNodes, (childNode) => {
     const serializedChildNode = serializeNodeWithId(childNode, options)
     if (serializedChildNode) {
       result.push(serializedChildNode)
     }
   })
-
   return result
 }
 
 export function serializeAttribute(
   element: Element,
   nodePrivacyLevel: NodePrivacyLevel,
-  attributeName: string
+  attributeName: string,
+  configuration: RumConfiguration
 ): string | number | boolean | null {
   if (nodePrivacyLevel === NodePrivacyLevel.HIDDEN) {
     // dup condition for direct access case
     return null
   }
   const attributeValue = element.getAttribute(attributeName)
-  if (nodePrivacyLevel === NodePrivacyLevel.MASK) {
+  if (
+    nodePrivacyLevel === NodePrivacyLevel.MASK &&
+    attributeName !== PRIVACY_ATTR_NAME &&
+    !STABLE_ATTRIBUTES.includes(attributeName) &&
+    attributeName !== configuration.actionNameAttribute
+  ) {
     const tagName = element.tagName
 
     switch (attributeName) {
       // Mask Attribute text content
       case 'title':
       case 'alt':
+      case 'placeholder':
         return CENSORED_STRING_MARK
     }
     // mask image URLs
@@ -315,8 +318,9 @@ export function serializeAttribute(
     if (tagName === 'A' && attributeName === 'href') {
       return CENSORED_STRING_MARK
     }
+
     // mask data-* attributes
-    if (attributeValue && attributeName.indexOf('data-') === 0 && attributeName !== PRIVACY_ATTR_NAME) {
+    if (attributeValue && startsWith(attributeName, 'data-')) {
       // Exception: it's safe to reveal the `${PRIVACY_ATTR_NAME}` attr
       return CENSORED_STRING_MARK
     }
@@ -356,7 +360,12 @@ function getValidTagName(tagName: string): string {
 function getCssRulesString(s: CSSStyleSheet): string | null {
   try {
     const rules = s.rules || s.cssRules
-    return rules ? Array.from(rules).map(getCssRuleString).join('') : null
+    if (rules) {
+      const styleSheetCssText = Array.from(rules, getCssRuleString).join('')
+      return switchToAbsoluteUrl(styleSheetCssText, s.href)
+    }
+
+    return null
   } catch (error) {
     return null
   }
@@ -376,7 +385,8 @@ function isSVGElement(el: Element): boolean {
 
 function getAttributesForPrivacyLevel(
   element: Element,
-  nodePrivacyLevel: NodePrivacyLevel
+  nodePrivacyLevel: NodePrivacyLevel,
+  options: SerializeOptions
 ): Record<string, string | number | boolean> {
   if (nodePrivacyLevel === NodePrivacyLevel.HIDDEN) {
     return {}
@@ -389,7 +399,7 @@ function getAttributesForPrivacyLevel(
   for (let i = 0; i < element.attributes.length; i += 1) {
     const attribute = element.attributes.item(i) as HtmlAttribute
     const attributeName = attribute.name
-    const attributeValue = serializeAttribute(element, nodePrivacyLevel, attributeName)
+    const attributeValue = serializeAttribute(element, nodePrivacyLevel, attributeName, options.configuration)
     if (attributeValue !== null) {
       safeAttrs[attributeName] = attributeValue
     }
@@ -466,13 +476,30 @@ function getAttributesForPrivacyLevel(
   }
 
   /**
-   * Serialize the scroll state for each element
+   * Serialize the scroll state for each element only for full snapshot
    */
-  if (element.scrollLeft) {
-    safeAttrs.rr_scrollLeft = Math.round(element.scrollLeft)
+  let scrollTop: number | undefined
+  let scrollLeft: number | undefined
+  const serializationContext = options.serializationContext
+  switch (serializationContext.status) {
+    case SerializationContextStatus.INITIAL_FULL_SNAPSHOT:
+      scrollTop = Math.round(element.scrollTop)
+      scrollLeft = Math.round(element.scrollLeft)
+      if (scrollTop || scrollLeft) {
+        serializationContext.elementsScrollPositions.set(element, { scrollTop, scrollLeft })
+      }
+      break
+    case SerializationContextStatus.SUBSEQUENT_FULL_SNAPSHOT:
+      if (serializationContext.elementsScrollPositions.has(element)) {
+        ;({ scrollTop, scrollLeft } = serializationContext.elementsScrollPositions.get(element)!)
+      }
+      break
   }
-  if (element.scrollTop) {
-    safeAttrs.rr_scrollTop = Math.round(element.scrollTop)
+  if (scrollLeft) {
+    safeAttrs.rr_scrollLeft = scrollLeft
+  }
+  if (scrollTop) {
+    safeAttrs.rr_scrollTop = scrollTop
   }
 
   return safeAttrs

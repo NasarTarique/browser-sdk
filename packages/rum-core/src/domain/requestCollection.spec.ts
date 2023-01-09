@@ -1,17 +1,16 @@
 import { isIE, RequestType } from '@datadog/browser-core'
-import { FetchStub, FetchStubManager, SPEC_ENDPOINTS, stubFetch, stubXhr, withXhr } from '../../../core/test/specHelper'
-import { RumConfiguration, validateAndBuildRumConfiguration } from './configuration'
+import type { FetchStub, FetchStubManager } from '../../../core/test/specHelper'
+import { SPEC_ENDPOINTS, stubFetch, stubXhr, withXhr } from '../../../core/test/specHelper'
+import type { RumConfiguration } from './configuration'
+import { validateAndBuildRumConfiguration } from './configuration'
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
-import { RequestCompleteEvent, RequestStartEvent, trackFetch, trackXhr } from './requestCollection'
-import { clearTracingIfNeeded, TraceIdentifier, Tracer } from './tracing/tracer'
-
-const configuration: RumConfiguration = {
-  ...validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
-  ...SPEC_ENDPOINTS,
-  maxBatchSize: 1,
-}
+import type { RequestCompleteEvent, RequestStartEvent } from './requestCollection'
+import { trackFetch, trackXhr } from './requestCollection'
+import type { Tracer } from './tracing/tracer'
+import { clearTracingIfNeeded, TraceIdentifier } from './tracing/tracer'
 
 describe('collect fetch', () => {
+  let configuration: RumConfiguration
   const FAKE_URL = 'http://fake-url/'
   let fetchStub: FetchStub
   let fetchStubManager: FetchStubManager
@@ -22,6 +21,11 @@ describe('collect fetch', () => {
   beforeEach(() => {
     if (isIE()) {
       pending('no fetch support')
+    }
+    configuration = {
+      ...validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
+      ...SPEC_ENDPOINTS,
+      batchMessagesLimit: 1,
     }
     fetchStubManager = stubFetch()
 
@@ -55,7 +59,7 @@ describe('collect fetch', () => {
     fetchStub(FAKE_URL).resolveWith({ status: 500, responseText: 'fetch error' })
 
     fetchStubManager.whenAllComplete(() => {
-      expect(startSpy).toHaveBeenCalledWith({ requestIndex: (jasmine.any(Number) as unknown) as number })
+      expect(startSpy).toHaveBeenCalledWith({ requestIndex: jasmine.any(Number) as unknown as number, url: FAKE_URL })
       done()
     })
   })
@@ -70,7 +74,6 @@ describe('collect fetch', () => {
       expect(request.method).toEqual('GET')
       expect(request.url).toEqual(FAKE_URL)
       expect(request.status).toEqual(500)
-      expect(request.responseText).toEqual('fetch error')
       done()
     })
   })
@@ -88,7 +91,7 @@ describe('collect fetch', () => {
   })
 
   it('should ignore intake requests', (done) => {
-    fetchStub(SPEC_ENDPOINTS.rumEndpointBuilder.build()).resolveWith({ status: 200, responseText: 'foo' })
+    fetchStub(SPEC_ENDPOINTS.rumEndpointBuilder.build('xhr')).resolveWith({ status: 200, responseText: 'foo' })
 
     fetchStubManager.whenAllComplete(() => {
       expect(startSpy).not.toHaveBeenCalled()
@@ -135,6 +138,7 @@ describe('collect fetch', () => {
 })
 
 describe('collect xhr', () => {
+  let configuration: RumConfiguration
   let startSpy: jasmine.Spy<(requestStartEvent: RequestStartEvent) => void>
   let completeSpy: jasmine.Spy<(requestCompleteEvent: RequestCompleteEvent) => void>
   let stubXhrManager: { reset(): void }
@@ -143,6 +147,11 @@ describe('collect xhr', () => {
   beforeEach(() => {
     if (isIE()) {
       pending('no fetch support')
+    }
+    configuration = {
+      ...validateAndBuildRumConfiguration({ clientToken: 'xxx', applicationId: 'xxx' })!,
+      ...SPEC_ENDPOINTS,
+      batchMessagesLimit: 1,
     }
     stubXhrManager = stubXhr()
     startSpy = jasmine.createSpy('requestStart')
@@ -173,7 +182,10 @@ describe('collect xhr', () => {
         xhr.complete(200)
       },
       onComplete() {
-        expect(startSpy).toHaveBeenCalledWith({ requestIndex: (jasmine.any(Number) as unknown) as number })
+        expect(startSpy).toHaveBeenCalledWith({
+          requestIndex: jasmine.any(Number) as unknown as number,
+          url: jasmine.stringMatching(/\/ok$/) as unknown as string,
+        })
         done()
       },
     })
@@ -193,7 +205,6 @@ describe('collect xhr', () => {
         expect(request.method).toEqual('GET')
         expect(request.url).toContain('/ok')
         expect(request.status).toEqual(200)
-        expect(request.responseText).toEqual('ok')
         done()
       },
     })
@@ -219,7 +230,7 @@ describe('collect xhr', () => {
   it('should ignore intake requests', (done) => {
     withXhr({
       setup(xhr) {
-        xhr.open('GET', SPEC_ENDPOINTS.rumEndpointBuilder.build())
+        xhr.open('GET', SPEC_ENDPOINTS.rumEndpointBuilder.build('xhr'))
         xhr.send()
         xhr.complete(200)
       },

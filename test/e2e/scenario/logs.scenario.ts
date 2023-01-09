@@ -1,14 +1,13 @@
-import { createTest } from '../lib/framework'
-import { UNREACHABLE_URL } from '../lib/helpers/constants'
+import { DEFAULT_REQUEST_ERROR_RESPONSE_LENGTH_LIMIT } from '@datadog/browser-logs/cjs/domain/configuration'
+import { createTest, flushEvents } from '../lib/framework'
+import { APPLICATION_ID, UNREACHABLE_URL } from '../lib/helpers/constants'
 import { browserExecute, browserExecuteAsync, flushBrowserLogs, withBrowserLogs } from '../lib/helpers/browser'
-import { flushEvents } from '../lib/helpers/flushEvents'
 
 describe('logs', () => {
   createTest('send logs')
     .withLogs()
     .run(async ({ serverEvents }) => {
       await browserExecute(() => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         window.DD_LOGS!.logger.log('hello')
       })
       await flushEvents()
@@ -75,19 +74,46 @@ describe('logs', () => {
       })
     })
 
+  createTest('keep only the first bytes of the response')
+    .withLogs({ forwardErrorsToLogs: true })
+    .run(async ({ serverEvents, baseUrl, servers }) => {
+      await browserExecuteAsync((done) => {
+        fetch('/throw-large-response').then(() => done(undefined), console.log)
+      })
+
+      await flushEvents()
+      expect(serverEvents.logs.length).toBe(1)
+      expect(serverEvents.logs[0].message).toBe(`Fetch error GET ${baseUrl}/throw-large-response`)
+      expect(serverEvents.logs[0].error?.origin).toBe('network')
+
+      const ellipsisSize = 3
+      expect(serverEvents.logs[0].error?.stack?.length).toBe(DEFAULT_REQUEST_ERROR_RESPONSE_LENGTH_LIMIT + ellipsisSize)
+
+      expect(servers.base.app.getLargeResponseWroteSize()).toBeGreaterThanOrEqual(
+        DEFAULT_REQUEST_ERROR_RESPONSE_LENGTH_LIMIT
+      )
+
+      await withBrowserLogs((browserLogs) => {
+        // Some browser report two errors:
+        // * the server responded with a status of 500
+        // * canceling the body stream is reported as a network error (net::ERR_FAILED)
+        expect(browserLogs.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
   createTest('track fetch error')
     .withLogs({ forwardErrorsToLogs: true })
     .run(async ({ serverEvents, baseUrl }) => {
       await browserExecuteAsync((unreachableUrl, done) => {
         let count = 0
-        fetch(`/throw`)
+        fetch('/throw')
           .then(() => (count += 1))
           .catch((err) => console.error(err))
-        fetch(`/unknown`)
+        fetch('/unknown')
           .then(() => (count += 1))
           .catch((err) => console.error(err))
         fetch(unreachableUrl).catch(() => (count += 1))
-        fetch(`/ok`)
+        fetch('/ok')
           .then(() => (count += 1))
           .catch((err) => console.error(err))
 
@@ -104,15 +130,15 @@ describe('logs', () => {
 
       expect(serverEvents.logs.length).toEqual(2)
 
-      const unreachableRequest = serverEvents.logs.find((log) => log.http.url.includes('/unreachable'))!
-      const throwRequest = serverEvents.logs.find((log) => log.http.url.includes('/throw'))!
+      const unreachableRequest = serverEvents.logs.find((log) => log.http!.url.includes('/unreachable'))!
+      const throwRequest = serverEvents.logs.find((log) => log.http!.url.includes('/throw'))!
 
       expect(throwRequest.message).toEqual(`Fetch error GET ${baseUrl}/throw`)
-      expect(throwRequest.http.status_code).toEqual(500)
+      expect(throwRequest.http!.status_code).toEqual(500)
       expect(throwRequest.error!.stack).toMatch(/Server error/)
 
       expect(unreachableRequest.message).toEqual(`Fetch error GET ${UNREACHABLE_URL}`)
-      expect(unreachableRequest.http.status_code).toEqual(0)
+      expect(unreachableRequest.http!.status_code).toEqual(0)
       expect(unreachableRequest.error!.stack).toContain('TypeError')
     })
 
@@ -121,13 +147,12 @@ describe('logs', () => {
     .withLogs()
     .run(async ({ serverEvents }) => {
       await browserExecute(() => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         window.DD_LOGS!.logger.log('hello')
       })
       await flushEvents()
       expect(serverEvents.logs.length).toBe(1)
       expect(serverEvents.logs[0].view.id).toBeDefined()
-      expect(serverEvents.logs[0].application_id).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')
+      expect(serverEvents.logs[0].application_id).toBe(APPLICATION_ID)
     })
 
   createTest('allow to modify events')
@@ -138,7 +163,6 @@ describe('logs', () => {
     })
     .run(async ({ serverEvents }) => {
       await browserExecute(() => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         window.DD_LOGS!.logger.log('hello', {})
       })
       await flushEvents()

@@ -1,9 +1,11 @@
-import { Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
-import { RecorderApi } from '../../../boot/rumPublicApi'
-import { noopRecorderApi, setup, TestSetupBuilder } from '../../../../test/specHelper'
-import { RawRumViewEvent, RumEventType, ViewLoadingType } from '../../../rawRumEvent.types'
+import type { Duration, RelativeTime, ServerDuration, TimeStamp } from '@datadog/browser-core'
+import type { RecorderApi } from '../../../boot/rumPublicApi'
+import type { TestSetupBuilder } from '../../../../test/specHelper'
+import { noopRecorderApi, setup } from '../../../../test/specHelper'
+import type { RawRumViewEvent } from '../../../rawRumEvent.types'
+import { RumEventType, ViewLoadingType } from '../../../rawRumEvent.types'
 import { LifeCycleEventType } from '../../lifeCycle'
-import { ViewEvent } from './trackViews'
+import type { ViewEvent } from './trackViews'
 import { startViewCollection } from './viewCollection'
 
 const VIEW: ViewEvent = {
@@ -18,7 +20,8 @@ const VIEW: ViewEvent = {
     errorCount: 10,
     longTaskCount: 10,
     resourceCount: 10,
-    userActionCount: 10,
+    actionCount: 10,
+    frustrationCount: 10,
   },
   id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   name: undefined,
@@ -28,6 +31,7 @@ const VIEW: ViewEvent = {
   location: {} as Location,
   startClocks: { relative: 1234 as RelativeTime, timeStamp: 123456789 as TimeStamp },
   timings: {
+    firstByte: 10 as Duration,
     domComplete: 10 as Duration,
     domContentLoaded: 10 as Duration,
     domInteractive: 10 as Duration,
@@ -49,7 +53,14 @@ describe('viewCollection', () => {
         selectInForegroundPeriodsFor: () => [{ start: 0 as ServerDuration, duration: 10 as ServerDuration }],
       })
       .beforeBuild(
-        ({ lifeCycle, configuration, foregroundContexts, domMutationObservable, locationChangeObservable }) => {
+        ({
+          lifeCycle,
+          configuration,
+          foregroundContexts,
+          featureFlagContexts,
+          domMutationObservable,
+          locationChangeObservable,
+        }) => {
           getReplayStatsSpy = jasmine.createSpy()
           startViewCollection(
             lifeCycle,
@@ -58,6 +69,7 @@ describe('viewCollection', () => {
             domMutationObservable,
             locationChangeObservable,
             foregroundContexts,
+            featureFlagContexts,
             {
               ...noopRecorderApi,
               getReplayStats: getReplayStatsSpy,
@@ -87,11 +99,15 @@ describe('viewCollection', () => {
         action: {
           count: 10,
         },
+        frustration: {
+          count: 10,
+        },
         cumulative_layout_shift: 1,
         custom_timings: {
           bar: (20 * 1e6) as ServerDuration,
           foo: (10 * 1e6) as ServerDuration,
         },
+        first_byte: (10 * 1e6) as ServerDuration,
         dom_complete: (10 * 1e6) as ServerDuration,
         dom_content_loaded: (10 * 1e6) as ServerDuration,
         dom_interactive: (10 * 1e6) as ServerDuration,
@@ -119,6 +135,7 @@ describe('viewCollection', () => {
       session: {
         has_replay: undefined,
       },
+      feature_flags: undefined,
     })
   })
 
@@ -137,6 +154,18 @@ describe('viewCollection', () => {
       segments_total_raw_size: 1000,
     })
     expect(rawRumViewEvent.session.has_replay).toBe(true)
+  })
+
+  it('should include feature flags', () => {
+    const { lifeCycle, rawRumEvents } = setupBuilder
+      .withFeatureFlagContexts({ findFeatureFlagEvaluations: () => ({ feature: 'foo' }) })
+      .build()
+
+    const view = { ...VIEW, loadingTime: -20 as Duration }
+    lifeCycle.notify(LifeCycleEventType.VIEW_UPDATED, view)
+    const rawRumViewEvent = rawRumEvents[rawRumEvents.length - 1].rawRumEvent as RawRumViewEvent
+
+    expect(rawRumViewEvent.feature_flags).toEqual({ feature: 'foo' })
   })
 
   it('should discard negative loading time', () => {

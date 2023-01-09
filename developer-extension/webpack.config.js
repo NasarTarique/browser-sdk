@@ -1,5 +1,5 @@
 const HtmlWebpackPlugin = require('html-webpack-plugin')
-const WebextensionPlugin = require('webpack-webextension-plugin')
+const { default: WebextensionPlugin } = require('@webextension-toolbox/webpack-webextension-plugin')
 const CopyPlugin = require('copy-webpack-plugin')
 const { DefinePlugin } = require('webpack')
 
@@ -36,9 +36,15 @@ module.exports = (_env, argv) => {
       ],
     }),
     baseConfig({
-      entry: './src/contentscript',
+      entry: './src/content-scripts/main.ts',
       output: {
-        filename: 'contentscript.js',
+        filename: 'content-script-main.js',
+      },
+    }),
+    baseConfig({
+      entry: './src/content-scripts/isolated.ts',
+      output: {
+        filename: 'content-script-isolated.js',
       },
     }),
     baseConfig({

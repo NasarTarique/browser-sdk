@@ -1,3 +1,4 @@
+import { isElementNode, getParentNode, isTextNode } from '@datadog/browser-rum-core'
 import {
   NodePrivacyLevel,
   PRIVACY_ATTR_NAME,
@@ -15,8 +16,6 @@ import {
 
 export const MAX_ATTRIBUTE_VALUE_CHAR_LENGTH = 100_000
 
-import { shouldIgnoreElement } from './serialize'
-
 const TEXT_MASKING_CHAR = 'x'
 
 /**
@@ -26,9 +25,8 @@ const TEXT_MASKING_CHAR = 'x'
  * derivePrivacyLevelGivenParent(getNodeSelfPrivacyLevel(node), parentNodePrivacyLevel)
  */
 export function getNodePrivacyLevel(node: Node, defaultPrivacyLevel: NodePrivacyLevel): NodePrivacyLevel {
-  const parentNodePrivacyLevel = node.parentNode
-    ? getNodePrivacyLevel(node.parentNode, defaultPrivacyLevel)
-    : defaultPrivacyLevel
+  const parentNode = getParentNode(node)
+  const parentNodePrivacyLevel = parentNode ? getNodePrivacyLevel(parentNode, defaultPrivacyLevel) : defaultPrivacyLevel
   const selfNodePrivacyLevel = getNodeSelfPrivacyLevel(node)
   return reducePrivacyLevel(selfNodePrivacyLevel, parentNodePrivacyLevel)
 }
@@ -63,7 +61,7 @@ export function reducePrivacyLevel(
  */
 export function getNodeSelfPrivacyLevel(node: Node): NodePrivacyLevel | undefined {
   // Only Element types can have a privacy level set
-  if (!isElement(node)) {
+  if (!isElementNode(node)) {
     return
   }
 
@@ -136,14 +134,6 @@ export function shouldMaskNode(node: Node, privacyLevel: NodePrivacyLevel) {
   }
 }
 
-function isElement(node: Node): node is Element {
-  return node.nodeType === node.ELEMENT_NODE
-}
-
-function isTextNode(node: Node): node is Text {
-  return node.nodeType === node.TEXT_NODE
-}
-
 function isFormElement(node: Node | null): boolean {
   if (!node || node.nodeType !== node.ELEMENT_NODE) {
     return false
@@ -214,4 +204,77 @@ export function getTextContent(
     }
   }
   return textContent
+}
+
+/**
+ * TODO: Preserve CSS element order, and record the presence of the tag, just don't render
+ * We don't need this logic on the recorder side.
+ * For security related meta's, customer can mask themmanually given they
+ * are easy to identify in the HEAD tag.
+ */
+export function shouldIgnoreElement(element: Element): boolean {
+  if (element.nodeName === 'SCRIPT') {
+    return true
+  }
+
+  if (element.nodeName === 'LINK') {
+    const relAttribute = getLowerCaseAttribute('rel')
+    return (
+      // Scripts
+      (relAttribute === 'preload' && getLowerCaseAttribute('as') === 'script') ||
+      // Favicons
+      relAttribute === 'shortcut icon' ||
+      relAttribute === 'icon'
+    )
+  }
+
+  if (element.nodeName === 'META') {
+    const nameAttribute = getLowerCaseAttribute('name')
+    const relAttribute = getLowerCaseAttribute('rel')
+    const propertyAttribute = getLowerCaseAttribute('property')
+    return (
+      // Favicons
+      /^msapplication-tile(image|color)$/.test(nameAttribute) ||
+      nameAttribute === 'application-name' ||
+      relAttribute === 'icon' ||
+      relAttribute === 'apple-touch-icon' ||
+      relAttribute === 'shortcut icon' ||
+      // Description
+      nameAttribute === 'keywords' ||
+      nameAttribute === 'description' ||
+      // Social
+      /^(og|twitter|fb):/.test(propertyAttribute) ||
+      /^(og|twitter):/.test(nameAttribute) ||
+      nameAttribute === 'pinterest' ||
+      // Robots
+      nameAttribute === 'robots' ||
+      nameAttribute === 'googlebot' ||
+      nameAttribute === 'bingbot' ||
+      // Http headers. Ex: X-UA-Compatible, Content-Type, Content-Language, cache-control,
+      // X-Translated-By
+      element.hasAttribute('http-equiv') ||
+      // Authorship
+      nameAttribute === 'author' ||
+      nameAttribute === 'generator' ||
+      nameAttribute === 'framework' ||
+      nameAttribute === 'publisher' ||
+      nameAttribute === 'progid' ||
+      /^article:/.test(propertyAttribute) ||
+      /^product:/.test(propertyAttribute) ||
+      // Verification
+      nameAttribute === 'google-site-verification' ||
+      nameAttribute === 'yandex-verification' ||
+      nameAttribute === 'csrf-token' ||
+      nameAttribute === 'p:domain_verify' ||
+      nameAttribute === 'verify-v1' ||
+      nameAttribute === 'verification' ||
+      nameAttribute === 'shopify-checkout-api-token'
+    )
+  }
+
+  function getLowerCaseAttribute(name: string) {
+    return (element.getAttribute(name) || '').toLowerCase()
+  }
+
+  return false
 }

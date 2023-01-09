@@ -1,4 +1,8 @@
-import { CENSORED_STRING_MARK, NodePrivacyLevel } from '../../constants'
+import { buildUrl } from '@datadog/browser-core'
+import { getParentNode, isNodeShadowRoot } from '@datadog/browser-rum-core'
+import type { NodePrivacyLevel } from '../../constants'
+import { CENSORED_STRING_MARK } from '../../constants'
+import type { StyleSheet } from '../../types'
 import { shouldMaskNode } from './privacy'
 
 export type NodeWithSerializedNode = Node & { s: 'Node with serialized node' }
@@ -12,10 +16,10 @@ export function hasSerializedNode(node: Node): node is NodeWithSerializedNode {
 export function nodeAndAncestorsHaveSerializedNode(node: Node): node is NodeWithSerializedNode {
   let current: Node | null = node
   while (current) {
-    if (!hasSerializedNode(current)) {
+    if (!hasSerializedNode(current) && !isNodeShadowRoot(current)) {
       return false
     }
-    current = current.parentNode
+    current = getParentNode(current)
   }
   return true
 }
@@ -67,4 +71,56 @@ export function getElementInputValue(element: Element, nodePrivacyLevel: NodePri
   }
 
   return value
+}
+
+export const URL_IN_CSS_REF = /url\((?:(')([^']*)'|(")([^"]*)"|([^)]*))\)/gm
+export const ABSOLUTE_URL = /^[A-Za-z]+:|^\/\//
+export const DATA_URI = /^data:.*,/i
+
+export function switchToAbsoluteUrl(cssText: string, cssHref: string | null): string {
+  return cssText.replace(
+    URL_IN_CSS_REF,
+    (
+      matchingSubstring: string,
+      singleQuote: string | undefined,
+      urlWrappedInSingleQuotes: string | undefined,
+      doubleQuote: string | undefined,
+      urlWrappedInDoubleQuotes: string | undefined,
+      urlNotWrappedInQuotes: string | undefined
+    ) => {
+      const url = urlWrappedInSingleQuotes || urlWrappedInDoubleQuotes || urlNotWrappedInQuotes
+
+      if (!cssHref || !url || ABSOLUTE_URL.test(url) || DATA_URI.test(url)) {
+        return matchingSubstring
+      }
+
+      const quote = singleQuote || doubleQuote || ''
+      return `url(${quote}${makeUrlAbsolute(url, cssHref)}${quote})`
+    }
+  )
+}
+
+export function makeUrlAbsolute(url: string, baseUrl: string): string {
+  try {
+    return buildUrl(url, baseUrl).href
+  } catch (_) {
+    return url
+  }
+}
+
+export function getStyleSheets(cssStyleSheets: CSSStyleSheet[] | undefined): StyleSheet[] | undefined {
+  if (cssStyleSheets === undefined || cssStyleSheets.length === 0) {
+    return undefined
+  }
+  return cssStyleSheets.map((cssStyleSheet) => {
+    const rules = cssStyleSheet.cssRules || cssStyleSheet.rules
+    const cssRules = Array.from(rules, (cssRule) => cssRule.cssText)
+
+    const styleSheet: StyleSheet = {
+      cssRules,
+      disabled: cssStyleSheet.disabled || undefined,
+      media: cssStyleSheet.media.length > 0 ? Array.from(cssStyleSheet.media) : undefined,
+    }
+    return styleSheet
+  })
 }

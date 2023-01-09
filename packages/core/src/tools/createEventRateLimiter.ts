@@ -1,4 +1,7 @@
-import { clocksNow, ErrorSource, ONE_MINUTE, RawError } from '..'
+import type { RawError } from './error'
+import { ErrorSource } from './error'
+import { clocksNow } from './timeUtils'
+import { ONE_MINUTE } from './utils'
 
 export type EventRateLimiter = ReturnType<typeof createEventRateLimiter>
 

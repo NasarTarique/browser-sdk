@@ -1,14 +1,11 @@
-import {
-  combine,
-  Context,
-  ContextValue,
-  createContextManager,
-  ErrorSource,
-  includes,
-  monitored,
-  display,
-  TimeStamp,
-} from '@datadog/browser-core'
+import type { Context } from '@datadog/browser-core'
+import { deepClone, assign, combine, createContextManager, ErrorSource, monitored } from '@datadog/browser-core'
+
+export interface LogsMessage {
+  message: string
+  status: StatusType
+  context?: Context
+}
 
 export const StatusType = {
   debug: 'debug',
@@ -16,58 +13,34 @@ export const StatusType = {
   info: 'info',
   warn: 'warn',
 } as const
-// eslint-disable-next-line @typescript-eslint/no-redeclare
+
 export type StatusType = typeof StatusType[keyof typeof StatusType]
-
-const STATUS_PRIORITIES: { [key in StatusType]: number } = {
-  [StatusType.debug]: 0,
-  [StatusType.info]: 1,
-  [StatusType.warn]: 2,
-  [StatusType.error]: 3,
-}
-
-export const STATUSES = Object.keys(StatusType) as StatusType[]
-
-export interface LogsMessage {
-  message: string
-  status: StatusType
-  date?: TimeStamp
-  [key: string]: ContextValue
-}
 
 export const HandlerType = {
   console: 'console',
   http: 'http',
   silent: 'silent',
 } as const
-// eslint-disable-next-line @typescript-eslint/no-redeclare
+
 export type HandlerType = typeof HandlerType[keyof typeof HandlerType]
+export const STATUSES = Object.keys(StatusType) as StatusType[]
 
 export class Logger {
   private contextManager = createContextManager()
 
   constructor(
-    private sendLog: (message: LogsMessage) => void,
+    private handleLogStrategy: (logsMessage: LogsMessage, logger: Logger) => void,
+    name?: string,
     private handlerType: HandlerType | HandlerType[] = HandlerType.http,
     private level: StatusType = StatusType.debug,
-    loggerContext: Context = {}
+    loggerContext: object = {}
   ) {
-    this.contextManager.set(loggerContext)
+    this.contextManager.set(assign({}, loggerContext, name ? { logger: { name } } : undefined))
   }
 
   @monitored
   log(message: string, messageContext?: object, status: StatusType = StatusType.info) {
-    if (STATUS_PRIORITIES[status] >= STATUS_PRIORITIES[this.level]) {
-      const handlers = Array.isArray(this.handlerType) ? this.handlerType : [this.handlerType]
-
-      if (includes(handlers, HandlerType.http)) {
-        this.sendLog({ message, status, ...combine(this.contextManager.get(), messageContext) })
-      }
-
-      if (includes(handlers, HandlerType.console)) {
-        display.log(`${status}: ${message}`, combine(this.contextManager.get(), messageContext))
-      }
-    }
+    this.handleLogStrategy({ message, context: deepClone(messageContext) as Context, status }, this)
   }
 
   debug(message: string, messageContext?: object) {
@@ -95,6 +68,10 @@ export class Logger {
     this.contextManager.set(context)
   }
 
+  getContext() {
+    return this.contextManager.get()
+  }
+
   addContext(key: string, value: any) {
     this.contextManager.add(key, value)
   }
@@ -107,7 +84,15 @@ export class Logger {
     this.handlerType = handler
   }
 
+  getHandler() {
+    return this.handlerType
+  }
+
   setLevel(level: StatusType) {
     this.level = level
+  }
+
+  getLevel() {
+    return this.level
   }
 }

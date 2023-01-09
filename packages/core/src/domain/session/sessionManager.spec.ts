@@ -1,12 +1,17 @@
-import { COOKIE_ACCESS_DELAY, CookieOptions, getCookie, setCookie } from '../../browser/cookie'
-import { Clock, mockClock, restorePageVisibility, setPageVisibility, createNewEvent } from '../../../test/specHelper'
-import { ONE_HOUR, DOM_EVENT, ONE_SECOND } from '../../tools/utils'
-import { RelativeTime } from '../../tools/timeUtils'
+import type { CookieOptions } from '../../browser/cookie'
+import { COOKIE_ACCESS_DELAY, getCookie, setCookie } from '../../browser/cookie'
+import type { Clock } from '../../../test/specHelper'
+import { mockClock, restorePageVisibility, setPageVisibility, createNewEvent } from '../../../test/specHelper'
+import { ONE_HOUR, ONE_SECOND } from '../../tools/utils'
+import type { RelativeTime } from '../../tools/timeUtils'
 import { isIE } from '../../tools/browserDetection'
-import { SessionManager, startSessionManager, stopSessionManager, VISIBILITY_CHECK_DELAY } from './sessionManager'
-import { SESSION_COOKIE_NAME, SESSION_TIME_OUT_DELAY, SESSION_EXPIRATION_DELAY } from './sessionStore'
+import { DOM_EVENT } from '../../browser/addEventListener'
+import type { SessionManager } from './sessionManager'
+import { startSessionManager, stopSessionManager, VISIBILITY_CHECK_DELAY } from './sessionManager'
+import { SESSION_COOKIE_NAME } from './sessionCookieStore'
+import { SESSION_EXPIRATION_DELAY, SESSION_TIME_OUT_DELAY } from './sessionConstants'
 
-enum FakeTrackingType {
+const enum FakeTrackingType {
   NOT_TRACKED = 'not-tracked',
   TRACKED = 'tracked',
 }
@@ -346,7 +351,7 @@ describe('startSessionManager', () => {
     })
 
     it('should not add created date to an existing session from an older versions', () => {
-      setCookie(SESSION_COOKIE_NAME, `id=abcde&first=tracked`, DURATION)
+      setCookie(SESSION_COOKIE_NAME, 'id=abcde&first=tracked', DURATION)
 
       const sessionManager = startSessionManager(COOKIE_OPTIONS, FIRST_PRODUCT_KEY, () => ({
         isTracked: true,

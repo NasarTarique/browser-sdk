@@ -1,26 +1,30 @@
+import type { RelativeTime, Observable, RawError, Duration } from '@datadog/browser-core'
 import {
-  RelativeTime,
-  Observable,
+  stopSessionManager,
+  toServerDuration,
+  ONE_SECOND,
+  findLast,
   noop,
   relativeNow,
   isIE,
-  resetExperimentalFeatures,
-  updateExperimentalFeatures,
-  Context,
 } from '@datadog/browser-core'
-import { createRumSessionManagerMock, RumSessionManagerMock } from '../../test/mockRumSessionManager'
-import { noopRecorderApi, setup, TestSetupBuilder } from '../../test/specHelper'
-import { RumPerformanceNavigationTiming, RumPerformanceEntry } from '../browser/performanceCollection'
-import { LifeCycle, LifeCycleEventType } from '../domain/lifeCycle'
+import { createNewEvent, interceptRequests } from '../../../core/test/specHelper'
+import type { RumSessionManagerMock } from '../../test/mockRumSessionManager'
+import { createRumSessionManagerMock } from '../../test/mockRumSessionManager'
+import type { TestSetupBuilder } from '../../test/specHelper'
+import { noopRecorderApi, setup } from '../../test/specHelper'
+import type { RumPerformanceNavigationTiming, RumPerformanceEntry } from '../browser/performanceCollection'
+import type { LifeCycle } from '../domain/lifeCycle'
+import { LifeCycleEventType } from '../domain/lifeCycle'
 import { SESSION_KEEP_ALIVE_INTERVAL, THROTTLE_VIEW_UPDATE_PERIOD } from '../domain/rumEventsCollection/view/trackViews'
 import { startViewCollection } from '../domain/rumEventsCollection/view/viewCollection'
-import { RumEvent } from '../rumEvent.types'
-import { LocationChange } from '../browser/locationChangeObservable'
+import type { RumEvent, RumViewEvent } from '../rumEvent.types'
+import type { LocationChange } from '../browser/locationChangeObservable'
 import { startLongTaskCollection } from '../domain/rumEventsCollection/longTask/longTaskCollection'
-import { RumSessionManager } from '..'
-import { initEventBridgeStub, deleteEventBridgeStub } from '../../../core/test/specHelper'
-import { RumConfiguration } from '../domain/configuration'
-import { startRumEventCollection } from './startRum'
+import type { RumSessionManager } from '..'
+import type { RumConfiguration, RumInitConfiguration } from '../domain/configuration'
+import { RumEventType } from '../rawRumEvent.types'
+import { startRum, startRumEventCollection } from './startRum'
 
 function collectServerEvents(lifeCycle: LifeCycle) {
   const serverRumEvents: RumEvent[] = []
@@ -30,24 +34,31 @@ function collectServerEvents(lifeCycle: LifeCycle) {
   return serverRumEvents
 }
 
-function startRum(
+function startRumStub(
   lifeCycle: LifeCycle,
   configuration: RumConfiguration,
   sessionManager: RumSessionManager,
   location: Location,
   domMutationObservable: Observable<void>,
-  locationChangeObservable: Observable<LocationChange>
+  locationChangeObservable: Observable<LocationChange>,
+  reportError: (error: RawError) => void
 ) {
-  const { stop: rumEventCollectionStop, foregroundContexts } = startRumEventCollection(
+  const {
+    stop: rumEventCollectionStop,
+    foregroundContexts,
+    featureFlagContexts,
+  } = startRumEventCollection(
     lifeCycle,
     configuration,
     location,
     sessionManager,
     locationChangeObservable,
+    domMutationObservable,
     () => ({
       context: {},
       user: {},
-    })
+    }),
+    reportError
   )
   const { stop: viewCollectionStop } = startViewCollection(
     lifeCycle,
@@ -56,6 +67,7 @@ function startRum(
     domMutationObservable,
     locationChangeObservable,
     foregroundContexts,
+    featureFlagContexts,
     noopRecorderApi
   )
 
@@ -80,13 +92,14 @@ describe('rum session', () => {
     setupBuilder = setup().beforeBuild(
       ({ location, lifeCycle, configuration, sessionManager, domMutationObservable, locationChangeObservable }) => {
         serverRumEvents = collectServerEvents(lifeCycle)
-        return startRum(
+        return startRumStub(
           lifeCycle,
           configuration,
           sessionManager,
           location,
           domMutationObservable,
-          locationChangeObservable
+          locationChangeObservable,
+          noop
         )
       }
     )
@@ -132,13 +145,14 @@ describe('rum session keep alive', () => {
       .beforeBuild(
         ({ location, lifeCycle, configuration, sessionManager, domMutationObservable, locationChangeObservable }) => {
           serverRumEvents = collectServerEvents(lifeCycle)
-          return startRum(
+          return startRumStub(
             lifeCycle,
             configuration,
             sessionManager,
             location,
             domMutationObservable,
-            locationChangeObservable
+            locationChangeObservable,
+            noop
           )
         }
       )
@@ -186,6 +200,7 @@ describe('rum session keep alive', () => {
 
 describe('rum events url', () => {
   const FAKE_NAVIGATION_ENTRY: RumPerformanceNavigationTiming = {
+    responseStart: 123 as RelativeTime,
     domComplete: 456 as RelativeTime,
     domContentLoadedEventEnd: 345 as RelativeTime,
     domInteractive: 234 as RelativeTime,
@@ -201,13 +216,14 @@ describe('rum events url', () => {
     setupBuilder = setup().beforeBuild(
       ({ location, lifeCycle, configuration, sessionManager, domMutationObservable, locationChangeObservable }) => {
         serverRumEvents = collectServerEvents(lifeCycle)
-        return startRum(
+        return startRumStub(
           lifeCycle,
           configuration,
           sessionManager,
           location,
           domMutationObservable,
-          locationChangeObservable
+          locationChangeObservable,
+          noop
         )
       }
     )
@@ -227,12 +243,14 @@ describe('rum events url', () => {
     clock.tick(10)
     changeLocation('http://foo.com/?bar=qux')
 
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, {
-      entryType: 'longtask',
-      startTime: relativeNow() - 5,
-      toJSON: noop,
-      duration: 5,
-    } as RumPerformanceEntry)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [
+      {
+        entryType: 'longtask',
+        startTime: relativeNow() - 5,
+        toJSON: noop,
+        duration: 5,
+      } as RumPerformanceEntry,
+    ])
 
     clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
@@ -269,7 +287,7 @@ describe('rum events url', () => {
 
     serverRumEvents.length = 0
 
-    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, FAKE_NAVIGATION_ENTRY)
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, [FAKE_NAVIGATION_ENTRY])
     clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
 
     expect(serverRumEvents.length).toEqual(1)
@@ -277,35 +295,43 @@ describe('rum events url', () => {
   })
 })
 
-describe('startRumEventCollection', () => {
+describe('view events', () => {
   let setupBuilder: TestSetupBuilder
-  let sendSpy: jasmine.Spy<(msg: string) => void>
+  let interceptor: ReturnType<typeof interceptRequests>
 
   beforeEach(() => {
-    updateExperimentalFeatures(['event-bridge'])
-    const eventBridgeStub = initEventBridgeStub()
-    sendSpy = spyOn(eventBridgeStub, 'send')
-    setupBuilder = setupBuilder = setup().beforeBuild(
-      ({ location, lifeCycle, configuration, sessionManager, locationChangeObservable }) =>
-        startRumEventCollection(lifeCycle, configuration, location, sessionManager, locationChangeObservable, () => ({
-          context: {},
-          user: {},
-        }))
-    )
+    setupBuilder = setup().beforeBuild(({ configuration }) => {
+      startRum({} as RumInitConfiguration, configuration, () => ({ context: {}, user: {} }), noopRecorderApi)
+    })
+    interceptor = interceptRequests()
   })
 
   afterEach(() => {
-    resetExperimentalFeatures()
-    deleteEventBridgeStub()
+    stopSessionManager()
     setupBuilder.cleanup()
+    interceptor.restore()
   })
 
-  it('should send bridge event when bridge is present', () => {
-    const { lifeCycle } = setupBuilder.build()
+  it('sends a view update on page unload', () => {
+    // Note: this test is intentionally very high level to make sure the view update is correctly
+    // made right before flushing the Batch.
 
-    const collectedRumEvent = {} as RumEvent & Context
-    lifeCycle.notify(LifeCycleEventType.RUM_EVENT_COLLECTED, collectedRumEvent)
+    // Arbitrary duration to simulate a non-zero view duration
+    const VIEW_DURATION = ONE_SECOND as Duration
 
-    expect(sendSpy).toHaveBeenCalled()
+    const { clock } = setupBuilder.withFakeClock().build()
+
+    clock.tick(VIEW_DURATION)
+    window.dispatchEvent(createNewEvent('beforeunload'))
+
+    const lastRumEvents = interceptor.requests[interceptor.requests.length - 1].body
+      .split('\n')
+      .map((line) => JSON.parse(line) as RumEvent)
+    const lastRumViewEvent = findLast(
+      lastRumEvents,
+      (serverRumEvent): serverRumEvent is RumViewEvent => serverRumEvent.type === RumEventType.VIEW
+    )!
+
+    expect(lastRumViewEvent.view.time_spent).toBe(toServerDuration(VIEW_DURATION))
   })
 })

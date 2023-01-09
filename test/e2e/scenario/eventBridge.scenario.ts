@@ -1,18 +1,17 @@
 import { browserExecute, flushBrowserLogs } from '../lib/helpers/browser'
-import { createTest, html } from '../lib/framework'
-import { flushEvents } from '../lib/helpers/flushEvents'
+import { createTest, flushEvents, html } from '../lib/framework'
 
 describe('bridge present', () => {
   createTest('send action')
-    .withRum({ trackInteractions: true, enableExperimentalFeatures: ['event-bridge'] })
+    .withRum({ trackUserInteractions: true })
     .withEventBridge()
     .withBody(
       html`
         <button>click me</button>
         <script>
-          const btn = document.querySelector('button')
-          btn.addEventListener('click', () => {
-            btn.setAttribute('data-clicked', 'true')
+          const button = document.querySelector('button')
+          button.addEventListener('click', () => {
+            button.setAttribute('data-clicked', 'true')
           })
         </script>
       `
@@ -27,7 +26,7 @@ describe('bridge present', () => {
     })
 
   createTest('send error')
-    .withRum({ enableExperimentalFeatures: ['event-bridge'] })
+    .withRum()
     .withEventBridge()
     .run(async ({ serverEvents, bridgeEvents }) => {
       await browserExecute(() => {
@@ -42,7 +41,7 @@ describe('bridge present', () => {
     })
 
   createTest('send resource')
-    .withRum({ enableExperimentalFeatures: ['event-bridge'] })
+    .withRum()
     .withEventBridge()
     .run(async ({ serverEvents, bridgeEvents }) => {
       await flushEvents()
@@ -52,7 +51,7 @@ describe('bridge present', () => {
     })
 
   createTest('send view')
-    .withRum({ enableExperimentalFeatures: ['event-bridge'] })
+    .withRum()
     .withEventBridge()
     .run(async ({ serverEvents, bridgeEvents }) => {
       await flushEvents()
@@ -61,8 +60,8 @@ describe('bridge present', () => {
       expect(bridgeEvents.rumViews.length).toBeGreaterThan(0)
     })
 
-  createTest('forward internal monitoring to the bridge')
-    .withLogs({ enableExperimentalFeatures: ['event-bridge'], internalMonitoringApiKey: 'xxx' })
+  createTest('forward telemetry to the bridge')
+    .withLogs()
     .withEventBridge()
     .run(async ({ serverEvents, bridgeEvents }) => {
       await browserExecute(() => {
@@ -71,21 +70,19 @@ describe('bridge present', () => {
             throw new window.Error('bar')
           },
         }
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         window.DD_LOGS!.logger.log('hop', context as any)
       })
 
       await flushEvents()
-      expect(serverEvents.internalMonitoring.length).toBe(0)
-      expect(bridgeEvents.internalMonitoring.length).toBe(1)
+      expect(serverEvents.telemetryErrors.length).toBe(0)
+      expect(bridgeEvents.telemetryErrors.length).toBe(1)
     })
 
   createTest('forward logs to the bridge')
-    .withLogs({ enableExperimentalFeatures: ['event-bridge'] })
+    .withLogs()
     .withEventBridge()
     .run(async ({ serverEvents, bridgeEvents }) => {
       await browserExecute(() => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
         window.DD_LOGS!.logger.log('hello')
       })
       await flushEvents()

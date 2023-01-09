@@ -1,5 +1,6 @@
-import { addMonitoringError, display, includes, monitor } from '@datadog/browser-core'
-import { createDeflateWorker, DeflateWorker } from './deflateWorker'
+import { addTelemetryError, display, includes, monitor } from '@datadog/browser-core'
+import type { DeflateWorker } from './deflateWorker'
+import { createDeflateWorker } from './deflateWorker'
 
 /**
  * In order to be sure that the worker is correctly working, we need a round trip of
@@ -93,7 +94,7 @@ function onInitialized(worker: DeflateWorker) {
   }
 }
 
-function onError(error: ErrorEvent | Error | string) {
+function onError(error: unknown) {
   if (state.status === DeflateWorkerStatus.Loading) {
     display.error('Session Replay recording failed to start: an error occurred while creating the Worker:', error)
     if (error instanceof Event || (error instanceof Error && includes(error.message, 'Content Security Policy'))) {
@@ -102,11 +103,11 @@ function onError(error: ErrorEvent | Error | string) {
           'https://docs.datadoghq.com/real_user_monitoring/faq/content_security_policy'
       )
     } else {
-      addMonitoringError(error)
+      addTelemetryError(error)
     }
     state.callbacks.forEach((callback) => callback())
     state = { status: DeflateWorkerStatus.Error }
   } else {
-    addMonitoringError(error)
+    addTelemetryError(error)
   }
 }

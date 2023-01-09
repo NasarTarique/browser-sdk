@@ -1,146 +1,120 @@
+import type { Context, TelemetryEvent, RawError, Observable, PageExitEvent } from '@datadog/browser-core'
 import {
+  sendToExtension,
+  createPageExitObservable,
+  TelemetryService,
+  willSyntheticsInjectRum,
   areCookiesAuthorized,
-  combine,
-  Context,
-  createEventRateLimiter,
-  InternalMonitoring,
-  Observable,
-  RawError,
-  RelativeTime,
-  trackRuntimeError,
-  trackConsoleError,
   canUseEventBridge,
   getEventBridge,
-  getRelativeTime,
-  startInternalMonitoring,
+  startTelemetry,
+  startBatchWithReplica,
+  isTelemetryReplicationAllowed,
+  ErrorSource,
+  addTelemetryConfiguration,
 } from '@datadog/browser-core'
-import { trackNetworkError } from '../domain/trackNetworkError'
-import { Logger, LogsMessage, StatusType } from '../domain/logger'
-import { LogsSessionManager, startLogsSessionManager, startLogsSessionManagerStub } from '../domain/logsSessionManager'
-import { startLoggerBatch } from '../transport/startLoggerBatch'
-import { LogsConfiguration } from '../domain/configuration'
+import { startLogsSessionManager, startLogsSessionManagerStub } from '../domain/logsSessionManager'
+import type { LogsConfiguration, LogsInitConfiguration } from '../domain/configuration'
+import { serializeLogsConfiguration } from '../domain/configuration'
+import { startLogsAssembly, getRUMInternalContext } from '../domain/assembly'
+import { startConsoleCollection } from '../domain/logsCollection/console/consoleCollection'
+import { startReportCollection } from '../domain/logsCollection/report/reportCollection'
+import { startNetworkErrorCollection } from '../domain/logsCollection/networkError/networkErrorCollection'
+import { startRuntimeErrorCollection } from '../domain/logsCollection/runtimeError/runtimeErrorCollection'
+import { LifeCycle, LifeCycleEventType } from '../domain/lifeCycle'
+import { startLoggerCollection } from '../domain/logsCollection/logger/loggerCollection'
+import type { CommonContext, RawAgentLogsEvent } from '../rawLogsEvent.types'
+import { startLogsBatch } from '../transport/startLogsBatch'
+import { startLogsBridge } from '../transport/startLogsBridge'
+import type { Logger } from '../domain/logger'
+import { StatusType } from '../domain/logger'
+import { startInternalContext } from '../domain/internalContext'
 
-export function startLogs(configuration: LogsConfiguration, errorLogger: Logger) {
-  const internalMonitoring = startInternalMonitoring(configuration)
+export function startLogs(
+  initConfiguration: LogsInitConfiguration,
+  configuration: LogsConfiguration,
+  getCommonContext: () => CommonContext,
+  mainLogger: Logger
+) {
+  const lifeCycle = new LifeCycle()
 
-  const errorObservable = new Observable<RawError>()
+  lifeCycle.subscribe(LifeCycleEventType.LOG_COLLECTED, (log) => sendToExtension('logs', log))
 
-  if (configuration.forwardErrorsToLogs) {
-    trackConsoleError(errorObservable)
-    trackRuntimeError(errorObservable)
-    trackNetworkError(configuration, errorObservable)
-  }
+  const reportError = (error: RawError) =>
+    lifeCycle.notify<RawAgentLogsEvent>(LifeCycleEventType.RAW_LOG_COLLECTED, {
+      rawLogsEvent: {
+        message: error.message,
+        date: error.startClocks.timeStamp,
+        error: {
+          origin: ErrorSource.AGENT, // Todo: Remove in the next major release
+        },
+        origin: ErrorSource.AGENT,
+        status: StatusType.error,
+      },
+    })
+  const pageExitObservable = createPageExitObservable()
+  const telemetry = startLogsTelemetry(configuration, reportError, pageExitObservable)
+  telemetry.setContextProvider(() => ({
+    application: {
+      id: getRUMInternalContext()?.application_id,
+    },
+    session: {
+      id: session.findTrackedSession()?.id,
+    },
+    view: {
+      id: (getRUMInternalContext()?.view as Context)?.id,
+    },
+    action: {
+      id: (getRUMInternalContext()?.user_action as Context)?.id,
+    },
+  }))
+
+  startNetworkErrorCollection(configuration, lifeCycle)
+  startRuntimeErrorCollection(configuration, lifeCycle)
+  startConsoleCollection(configuration, lifeCycle)
+  startReportCollection(configuration, lifeCycle)
+  const { handleLog } = startLoggerCollection(lifeCycle)
 
   const session =
-    areCookiesAuthorized(configuration.cookieOptions) && !canUseEventBridge()
+    areCookiesAuthorized(configuration.cookieOptions) && !canUseEventBridge() && !willSyntheticsInjectRum()
       ? startLogsSessionManager(configuration)
       : startLogsSessionManagerStub(configuration)
 
-  return doStartLogs(configuration, errorObservable, internalMonitoring, session, errorLogger)
-}
+  startLogsAssembly(session, configuration, lifeCycle, getCommonContext, mainLogger, reportError)
 
-export function doStartLogs(
-  configuration: LogsConfiguration,
-  errorObservable: Observable<RawError>,
-  internalMonitoring: InternalMonitoring,
-  sessionManager: LogsSessionManager,
-  errorLogger: Logger
-) {
-  internalMonitoring.setExternalContextProvider(() =>
-    combine({ session_id: sessionManager.findTrackedSession()?.id }, getRUMInternalContext(), {
-      view: { name: null, url: null, referrer: null },
-    })
-  )
-
-  const assemble = buildAssemble(sessionManager, configuration, reportError)
-
-  let onLogEventCollected: (message: Context) => void
-  if (canUseEventBridge()) {
-    const bridge = getEventBridge()!
-    onLogEventCollected = (message) => bridge.send('log', message)
+  if (!canUseEventBridge()) {
+    startLogsBatch(configuration, lifeCycle, reportError, pageExitObservable)
   } else {
-    const batch = startLoggerBatch(configuration)
-    onLogEventCollected = (message) => batch.add(message)
+    startLogsBridge(lifeCycle)
   }
 
-  function reportError(error: RawError) {
-    errorLogger.error(
-      error.message,
-      combine(
-        {
-          date: error.startClocks.timeStamp,
-          error: {
-            kind: error.type,
-            origin: error.source,
-            stack: error.stack,
-          },
-        },
-        error.resource
-          ? {
-              http: {
-                method: error.resource.method,
-                status_code: error.resource.statusCode,
-                url: error.resource.url,
-              },
-            }
-          : undefined
-      )
-    )
-  }
-  errorObservable.subscribe(reportError)
+  addTelemetryConfiguration(serializeLogsConfiguration(initConfiguration))
+  const internalContext = startInternalContext(session)
 
-  return (message: LogsMessage, currentContext: Context) => {
-    const contextualizedMessage = assemble(message, currentContext)
-    if (contextualizedMessage) {
-      onLogEventCollected(contextualizedMessage)
-    }
+  return {
+    handleLog,
+    getInternalContext: internalContext.get,
   }
 }
 
-export function buildAssemble(
-  sessionManager: LogsSessionManager,
+function startLogsTelemetry(
   configuration: LogsConfiguration,
-  reportError: (error: RawError) => void
+  reportError: (error: RawError) => void,
+  pageExitObservable: Observable<PageExitEvent>
 ) {
-  const logRateLimiters = {
-    [StatusType.error]: createEventRateLimiter(StatusType.error, configuration.eventRateLimiterThreshold, reportError),
-    [StatusType.warn]: createEventRateLimiter(StatusType.warn, configuration.eventRateLimiterThreshold, reportError),
-    [StatusType.info]: createEventRateLimiter(StatusType.info, configuration.eventRateLimiterThreshold, reportError),
-    [StatusType.debug]: createEventRateLimiter(StatusType.debug, configuration.eventRateLimiterThreshold, reportError),
-    ['custom']: createEventRateLimiter('custom', configuration.eventRateLimiterThreshold, reportError),
-  }
-
-  return (message: LogsMessage, currentContext: Context) => {
-    const startTime = message.date ? getRelativeTime(message.date) : undefined
-    const session = sessionManager.findTrackedSession(startTime)
-
-    if (!session) {
-      return undefined
-    }
-
-    const contextualizedMessage = combine(
-      { service: configuration.service, session_id: session.id },
-      currentContext,
-      getRUMInternalContext(startTime),
-      message
+  const telemetry = startTelemetry(TelemetryService.LOGS, configuration)
+  if (canUseEventBridge()) {
+    const bridge = getEventBridge<'internal_telemetry', TelemetryEvent>()!
+    telemetry.observable.subscribe((event) => bridge.send('internal_telemetry', event))
+  } else {
+    const telemetryBatch = startBatchWithReplica(
+      configuration,
+      configuration.rumEndpointBuilder,
+      reportError,
+      pageExitObservable,
+      configuration.replica?.rumEndpointBuilder
     )
-
-    if (
-      configuration.beforeSend?.(contextualizedMessage) === false ||
-      (logRateLimiters[contextualizedMessage.status] ?? logRateLimiters['custom']).isLimitReached()
-    ) {
-      return undefined
-    }
-
-    return contextualizedMessage as Context
+    telemetry.observable.subscribe((event) => telemetryBatch.add(event, isTelemetryReplicationAllowed(configuration)))
   }
-}
-
-interface Rum {
-  getInternalContext: (startTime?: RelativeTime) => Context
-}
-
-function getRUMInternalContext(startTime?: RelativeTime): Context | undefined {
-  const rum = (window as any).DD_RUM as Rum
-  return rum && rum.getInternalContext ? rum.getInternalContext(startTime) : undefined
+  return telemetry
 }

@@ -1,35 +1,88 @@
-import { Tabs } from 'bumbag'
-import React from 'react'
-import { ActionsTab } from './tabs/actionsTab'
-import { ConfigTab } from './tabs/configTab'
-import { sendAction } from './actions'
+import React, { useState } from 'react'
+import { Tabs, Text } from '@mantine/core'
+
+import type { Settings } from './components/settingsTab'
+import { SettingsTab } from './components/settingsTab'
+import { InfosTab } from './components/infosTab'
+import { useEvents } from './hooks/useEvents'
+import { EventTab } from './components/eventsTab'
+import { useStore } from './hooks/useStore'
+import { useAutoFlushEvents } from './hooks/useAutoFlushEvents'
+
+const enum PanelTabs {
+  Events = 'events',
+  Infos = 'infos',
+  Settings = 'settings',
+}
 
 export function Panel() {
-  setInterval(() => {
-    sendAction('getConfig', 'rum')
-    sendAction('getConfig', 'logs')
-  }, 2000)
-
-  chrome.devtools.network.onNavigated.addListener(() => {
-    sendAction('getConfig', 'rum')
-    sendAction('getConfig', 'logs')
+  const [{ devServerStatus, ...settingsFromStore }, setStore] = useStore()
+  const [settingsFromMemory, setSettingsFromMemory] = useState<
+    Pick<Settings, 'autoFlush' | 'preserveEvents' | 'eventSource'>
+  >({
+    preserveEvents: false,
+    autoFlush: true,
+    eventSource: 'requests',
   })
+
+  useAutoFlushEvents(settingsFromMemory.autoFlush)
+
+  const settings: Settings = { ...settingsFromStore, ...settingsFromMemory }
+
+  const { events, filters, setFilters, clear } = useEvents(settings)
+
   return (
-    <Tabs>
+    <Tabs
+      color="violet"
+      defaultValue={PanelTabs.Events}
+      sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}
+    >
       <Tabs.List>
-        <Tabs.Tab tabId="tab1">Actions</Tabs.Tab>
-        <Tabs.Tab tabId="tab2">RUM Config</Tabs.Tab>
-        <Tabs.Tab tabId="tab3">Logs Config</Tabs.Tab>
+        <Tabs.Tab value={PanelTabs.Events}>Events</Tabs.Tab>
+        <Tabs.Tab value={PanelTabs.Infos}>
+          <Text>Infos</Text>
+        </Tabs.Tab>
+        <Tabs.Tab
+          value={PanelTabs.Settings}
+          rightSection={
+            isInterceptingNetworkRequests(settings) && (
+              <Text c="orange" fw="bold" title="Intercepting network requests">
+                ⚠
+              </Text>
+            )
+          }
+        >
+          Settings
+        </Tabs.Tab>
       </Tabs.List>
-      <Tabs.Panel tabId="tab1" padding="major-2">
-        <ActionsTab />
+      <Tabs.Panel value={PanelTabs.Events} sx={{ flex: 1, minHeight: 0 }}>
+        <EventTab events={events} filters={filters} onFiltered={setFilters} clear={clear} />
       </Tabs.Panel>
-      <Tabs.Panel tabId="tab2" padding="major-2">
-        <ConfigTab product={'rum'} />
+      <Tabs.Panel value={PanelTabs.Infos} sx={{ flex: 1, minHeight: 0 }}>
+        <InfosTab />
       </Tabs.Panel>
-      <Tabs.Panel tabId="tab3" padding="major-2">
-        <ConfigTab product={'logs'} />
+      <Tabs.Panel value={PanelTabs.Settings} sx={{ flex: 1, minHeight: 0 }}>
+        <SettingsTab
+          settings={settings}
+          setSettings={(newSettings) => {
+            for (const [name, value] of Object.entries(newSettings)) {
+              if (name in settingsFromMemory) {
+                setSettingsFromMemory((oldSettings) => ({
+                  ...oldSettings,
+                  [name]: value,
+                }))
+              } else {
+                setStore({ [name]: value })
+              }
+            }
+          }}
+          devServerStatus={devServerStatus}
+        />
       </Tabs.Panel>
     </Tabs>
   )
+}
+
+function isInterceptingNetworkRequests(settings: Settings) {
+  return settings.blockIntakeRequests || settings.useDevBundles || settings.useRumSlim
 }

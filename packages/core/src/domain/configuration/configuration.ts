@@ -1,10 +1,12 @@
-import { BuildEnv } from '../../boot/init'
-import { CookieOptions, getCurrentSite } from '../../browser/cookie'
+import type { CookieOptions } from '../../browser/cookie'
+import { getCurrentSite } from '../../browser/cookie'
 import { catchUserErrors } from '../../tools/catchUserErrors'
 import { display } from '../../tools/display'
-import { isPercentage, ONE_KILO_BYTE, ONE_SECOND } from '../../tools/utils'
+import { assign, isPercentage, ONE_KIBI_BYTE, ONE_SECOND } from '../../tools/utils'
+import type { RawTelemetryConfiguration } from '../telemetry'
 import { updateExperimentalFeatures } from './experimentalFeatures'
-import { computeTransportConfiguration, TransportConfiguration } from './transportConfiguration'
+import type { TransportConfiguration } from './transportConfiguration'
+import { computeTransportConfiguration } from './transportConfiguration'
 
 export const DefaultPrivacyLevel = {
   ALLOW: 'allow',
@@ -17,8 +19,15 @@ export interface InitConfiguration {
   // global options
   clientToken: string
   beforeSend?: GenericBeforeSendCallback | undefined
+  /**
+   * @deprecated use sessionSampleRate instead
+   */
   sampleRate?: number | undefined
+  sessionSampleRate?: number | undefined
+  telemetrySampleRate?: number | undefined
   silentMultipleInit?: boolean | undefined
+  trackResources?: boolean | undefined
+  trackLongTasks?: boolean | undefined
 
   // transport options
   proxyUrl?: string | undefined
@@ -36,9 +45,11 @@ export interface InitConfiguration {
 
   // internal options
   enableExperimentalFeatures?: string[] | undefined
-  internalMonitoringApiKey?: string | undefined
   replica?: ReplicaUserConfiguration | undefined
   datacenter?: string
+  internalAnalyticsSubdomain?: string
+
+  telemetryConfigurationSampleRate?: number
 }
 
 // This type is only used to build the core configuration. Logs and RUM SDKs are using a proper type
@@ -54,75 +65,85 @@ export interface Configuration extends TransportConfiguration {
   // Built from init configuration
   beforeSend: GenericBeforeSendCallback | undefined
   cookieOptions: CookieOptions
-  sampleRate: number
+  sessionSampleRate: number
+  telemetrySampleRate: number
+  telemetryConfigurationSampleRate: number
   service: string | undefined
   silentMultipleInit: boolean
 
   // Event limits
   eventRateLimiterThreshold: number // Limit the maximum number of actions, errors and logs per minutes
-  maxInternalMonitoringMessagesPerPage: number
-  requestErrorResponseLengthLimit: number
+  maxTelemetryEventsPerPage: number
 
   // Batch configuration
   batchBytesLimit: number
   flushTimeout: number
-  maxBatchSize: number
-  maxMessageSize: number
+  batchMessagesLimit: number
+  messageBytesLimit: number
 }
 
-export function validateAndBuildConfiguration(
-  initConfiguration: InitConfiguration,
-  buildEnv: BuildEnv
-): Configuration | undefined {
+export function validateAndBuildConfiguration(initConfiguration: InitConfiguration): Configuration | undefined {
   if (!initConfiguration || !initConfiguration.clientToken) {
     display.error('Client Token is not configured, we will not send any data.')
     return
   }
 
-  if (initConfiguration.sampleRate !== undefined && !isPercentage(initConfiguration.sampleRate)) {
-    display.error('Sample Rate should be a number between 0 and 100')
+  const sessionSampleRate = initConfiguration.sessionSampleRate ?? initConfiguration.sampleRate
+  if (sessionSampleRate !== undefined && !isPercentage(sessionSampleRate)) {
+    display.error('Session Sample Rate should be a number between 0 and 100')
     return
   }
 
-  // Set the experimental feature flags as early as possible so we can use them in most places
+  if (initConfiguration.telemetrySampleRate !== undefined && !isPercentage(initConfiguration.telemetrySampleRate)) {
+    display.error('Telemetry Sample Rate should be a number between 0 and 100')
+    return
+  }
+
+  if (
+    initConfiguration.telemetryConfigurationSampleRate !== undefined &&
+    !isPercentage(initConfiguration.telemetryConfigurationSampleRate)
+  ) {
+    display.error('Telemetry Configuration Sample Rate should be a number between 0 and 100')
+    return
+  }
+
+  // Set the experimental feature flags as early as possible, so we can use them in most places
   updateExperimentalFeatures(initConfiguration.enableExperimentalFeatures)
 
-  return {
-    ...computeTransportConfiguration(initConfiguration, buildEnv),
+  return assign(
+    {
+      beforeSend:
+        initConfiguration.beforeSend && catchUserErrors(initConfiguration.beforeSend, 'beforeSend threw an error:'),
+      cookieOptions: buildCookieOptions(initConfiguration),
+      sessionSampleRate: sessionSampleRate ?? 100,
+      telemetrySampleRate: initConfiguration.telemetrySampleRate ?? 20,
+      telemetryConfigurationSampleRate: initConfiguration.telemetryConfigurationSampleRate ?? 5,
+      service: initConfiguration.service,
+      silentMultipleInit: !!initConfiguration.silentMultipleInit,
 
-    beforeSend:
-      initConfiguration.beforeSend && catchUserErrors(initConfiguration.beforeSend, 'beforeSend threw an error:'),
-    cookieOptions: buildCookieOptions(initConfiguration),
-    sampleRate: initConfiguration.sampleRate ?? 100,
-    service: initConfiguration.service,
-    silentMultipleInit: !!initConfiguration.silentMultipleInit,
+      /**
+       * beacon payload max queue size implementation is 64kb
+       * ensure that we leave room for logs, rum and potential other users
+       */
+      batchBytesLimit: 16 * ONE_KIBI_BYTE,
 
-    /**
-     * beacon payload max queue size implementation is 64kb
-     * ensure that we leave room for logs, rum and potential other users
-     */
-    batchBytesLimit: 16 * ONE_KILO_BYTE,
+      eventRateLimiterThreshold: 3000,
+      maxTelemetryEventsPerPage: 15,
 
-    eventRateLimiterThreshold: 3000,
-    maxInternalMonitoringMessagesPerPage: 15,
+      /**
+       * flush automatically, aim to be lower than ALB connection timeout
+       * to maximize connection reuse.
+       */
+      flushTimeout: 30 * ONE_SECOND,
 
-    /**
-     * arbitrary value, byte precision not needed
-     */
-    requestErrorResponseLengthLimit: 32 * ONE_KILO_BYTE,
-
-    /**
-     * flush automatically, aim to be lower than ALB connection timeout
-     * to maximize connection reuse.
-     */
-    flushTimeout: 30 * ONE_SECOND,
-
-    /**
-     * Logs intake limit
-     */
-    maxBatchSize: 50,
-    maxMessageSize: 256 * ONE_KILO_BYTE,
-  }
+      /**
+       * Logs intake limit
+       */
+      batchMessagesLimit: 50,
+      messageBytesLimit: 256 * ONE_KIBI_BYTE,
+    },
+    computeTransportConfiguration(initConfiguration)
+  )
 }
 
 export function buildCookieOptions(initConfiguration: InitConfiguration) {
@@ -140,4 +161,20 @@ export function buildCookieOptions(initConfiguration: InitConfiguration) {
 
 function mustUseSecureCookie(initConfiguration: InitConfiguration) {
   return !!initConfiguration.useSecureSessionCookie || !!initConfiguration.useCrossSiteSessionCookie
+}
+
+export function serializeConfiguration(configuration: InitConfiguration): Partial<RawTelemetryConfiguration> {
+  return {
+    session_sample_rate: configuration.sessionSampleRate ?? configuration.sampleRate,
+    telemetry_sample_rate: configuration.telemetrySampleRate,
+    telemetry_configuration_sample_rate: configuration.telemetryConfigurationSampleRate,
+    use_before_send: !!configuration.beforeSend,
+    use_cross_site_session_cookie: configuration.useCrossSiteSessionCookie,
+    use_secure_session_cookie: configuration.useSecureSessionCookie,
+    use_proxy: configuration.proxyUrl !== undefined ? !!configuration.proxyUrl : undefined,
+    silent_multiple_init: configuration.silentMultipleInit,
+    track_session_across_subdomains: configuration.trackSessionAcrossSubdomains,
+    track_resources: configuration.trackResources,
+    track_long_task: configuration.trackLongTasks,
+  }
 }

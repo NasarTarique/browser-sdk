@@ -1,33 +1,30 @@
+import type { RelativeTime, TimeStamp, Context } from '@datadog/browser-core'
 import {
-  ONE_SECOND,
-  RelativeTime,
-  getTimeStamp,
-  display,
-  TimeStamp,
-  DefaultPrivacyLevel,
   updateExperimentalFeatures,
   resetExperimentalFeatures,
+  ONE_SECOND,
+  getTimeStamp,
+  display,
+  DefaultPrivacyLevel,
 } from '@datadog/browser-core'
+import { cleanupSyntheticsWorkerValues, mockSyntheticsWorkerValues } from '../../../core/test/syntheticsWorkerValues'
 import { initEventBridgeStub, deleteEventBridgeStub } from '../../../core/test/specHelper'
-import {
-  cleanupSyntheticsWorkerValues,
-  mockSyntheticsWorkerValues,
-  noopRecorderApi,
-  setup,
-  TestSetupBuilder,
-} from '../../test/specHelper'
-import { HybridInitConfiguration, RumInitConfiguration } from '../domain/configuration'
+import type { TestSetupBuilder } from '../../test/specHelper'
+import { noopRecorderApi, setup } from '../../test/specHelper'
+import type { HybridInitConfiguration, RumInitConfiguration } from '../domain/configuration'
 import { ActionType } from '../rawRumEvent.types'
-import { makeRumPublicApi, RumPublicApi, StartRum, RecorderApi } from './rumPublicApi'
+import type { RumPublicApi, StartRum, RecorderApi } from './rumPublicApi'
+import { makeRumPublicApi } from './rumPublicApi'
 
 const noopStartRum = (): ReturnType<StartRum> => ({
   addAction: () => undefined,
   addError: () => undefined,
   addTiming: () => undefined,
+  addFeatureFlagEvaluation: () => undefined,
   startView: () => undefined,
   getInternalContext: () => undefined,
   lifeCycle: {} as any,
-  parentContexts: {} as any,
+  viewContexts: {} as any,
   session: {} as any,
 })
 const DEFAULT_INIT_CONFIGURATION = { applicationId: 'xxx', clientToken: 'xxx' }
@@ -83,12 +80,10 @@ describe('rum public api', () => {
 
     describe('if event bridge present', () => {
       beforeEach(() => {
-        updateExperimentalFeatures(['event-bridge'])
         initEventBridgeStub()
       })
 
       afterEach(() => {
-        resetExperimentalFeatures()
         deleteEventBridgeStub()
       })
 
@@ -98,10 +93,10 @@ describe('rum public api', () => {
         expect(display.error).not.toHaveBeenCalled()
       })
 
-      it('init should force sample rate to 100', () => {
-        const invalidConfiguration: HybridInitConfiguration = { sampleRate: 50 }
+      it('init should force session sample rate to 100', () => {
+        const invalidConfiguration: HybridInitConfiguration = { sessionSampleRate: 50 }
         rumPublicApi.init(invalidConfiguration as RumInitConfiguration)
-        expect(rumPublicApi.getInitConfiguration()?.sampleRate).toEqual(100)
+        expect(rumPublicApi.getInitConfiguration()?.sessionSampleRate).toEqual(100)
       })
     })
   })
@@ -468,6 +463,94 @@ describe('rum public api', () => {
     })
   })
 
+  describe('getUser', () => {
+    let rumPublicApi: RumPublicApi
+
+    beforeEach(() => {
+      rumPublicApi = makeRumPublicApi(noopStartRum, noopRecorderApi)
+    })
+
+    it('should return empty object if no user has been set', () => {
+      const userClone = rumPublicApi.getUser()
+      expect(userClone).toEqual({})
+    })
+
+    it('should return a clone of the original object if set', () => {
+      const user = { id: 'foo', name: 'bar', email: 'qux', foo: { bar: 'qux' } }
+      rumPublicApi.setUser(user)
+      const userClone = rumPublicApi.getUser()
+      const userClone2 = rumPublicApi.getUser()
+
+      expect(userClone).not.toBe(user)
+      expect(userClone).not.toBe(userClone2)
+      expect(userClone).toEqual(user)
+    })
+  })
+
+  describe('setUserProperty', () => {
+    const user = { id: 'foo', name: 'bar', email: 'qux', foo: { bar: 'qux' } }
+    const addressAttribute = { city: 'Paris' }
+    let rumPublicApi: RumPublicApi
+
+    beforeEach(() => {
+      rumPublicApi = makeRumPublicApi(noopStartRum, noopRecorderApi)
+    })
+
+    it('should add attribute', () => {
+      rumPublicApi.setUser(user)
+      rumPublicApi.setUserProperty('address', addressAttribute)
+      const userClone = rumPublicApi.getUser()
+
+      expect(userClone.address).toEqual(addressAttribute)
+    })
+
+    it('should not contain original reference to object', () => {
+      const userDetails: { [key: string]: any } = { name: 'john' }
+      rumPublicApi.setUser(user)
+      rumPublicApi.setUserProperty('userDetails', userDetails)
+      userDetails.DOB = '11/11/1999'
+      const userClone = rumPublicApi.getUser()
+
+      expect(userClone.userDetails).not.toBe(userDetails)
+    })
+
+    it('should override attribute', () => {
+      rumPublicApi.setUser(user)
+      rumPublicApi.setUserProperty('foo', addressAttribute)
+      const userClone = rumPublicApi.getUser()
+
+      expect(userClone).toEqual({ ...user, foo: addressAttribute })
+    })
+
+    it('should sanitize properties', () => {
+      rumPublicApi.setUserProperty('id', 123)
+      rumPublicApi.setUserProperty('name', ['Adam', 'Smith'])
+      rumPublicApi.setUserProperty('email', { foo: 'bar' })
+      const userClone = rumPublicApi.getUser()
+
+      expect(userClone.id).toEqual('123')
+      expect(userClone.name).toEqual('Adam,Smith')
+      expect(userClone.email).toEqual('[object Object]')
+    })
+  })
+
+  describe('removeUserProperty', () => {
+    let rumPublicApi: RumPublicApi
+
+    beforeEach(() => {
+      rumPublicApi = makeRumPublicApi(noopStartRum, noopRecorderApi)
+    })
+
+    it('should remove property', () => {
+      const user: Context = { id: 'foo', name: 'bar', email: 'qux', foo: { bar: 'qux' } }
+
+      rumPublicApi.setUser(user)
+      rumPublicApi.removeUserProperty('foo')
+      const userClone = rumPublicApi.getUser()
+      expect(userClone.foo).toBeUndefined()
+    })
+  })
+
   describe('addTiming', () => {
     let addTimingSpy: jasmine.Spy<ReturnType<StartRum>['addTiming']>
     let displaySpy: jasmine.Spy<() => void>
@@ -527,6 +610,61 @@ describe('rum public api', () => {
     })
   })
 
+  describe('addFeatureFlagEvaluation', () => {
+    let addFeatureFlagEvaluationSpy: jasmine.Spy<ReturnType<StartRum>['addFeatureFlagEvaluation']>
+    let displaySpy: jasmine.Spy<() => void>
+    let rumPublicApi: RumPublicApi
+    let setupBuilder: TestSetupBuilder
+
+    beforeEach(() => {
+      addFeatureFlagEvaluationSpy = jasmine.createSpy()
+      displaySpy = spyOn(display, 'error')
+      rumPublicApi = makeRumPublicApi(
+        () => ({
+          ...noopStartRum(),
+          addFeatureFlagEvaluation: addFeatureFlagEvaluationSpy,
+        }),
+        noopRecorderApi
+      )
+      setupBuilder = setup()
+    })
+
+    afterEach(() => {
+      setupBuilder.cleanup()
+    })
+
+    afterEach(() => {
+      resetExperimentalFeatures()
+    })
+
+    it('should add feature flag evaluation when ff feature_flags enable', () => {
+      updateExperimentalFeatures(['feature_flags'])
+
+      rumPublicApi.init(DEFAULT_INIT_CONFIGURATION)
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      ;(rumPublicApi as any).addFeatureFlagEvaluation('feature', 'foo')
+
+      expect(addFeatureFlagEvaluationSpy.calls.argsFor(0)).toEqual(['feature', 'foo'])
+      expect(displaySpy).not.toHaveBeenCalled()
+    })
+
+    it('API should not be available when ff feature_flags disabled', () => {
+      rumPublicApi.init(DEFAULT_INIT_CONFIGURATION)
+
+      expect(Object.keys(rumPublicApi)).not.toContain('addFeatureFlagEvaluation')
+      expect(displaySpy).not.toHaveBeenCalled()
+    })
+
+    it('API should not be available before init when ff feature_flags enabled', () => {
+      updateExperimentalFeatures(['feature_flags'])
+
+      expect(Object.keys(rumPublicApi)).not.toContain('addFeatureFlagEvaluation')
+
+      expect(displaySpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('trackViews mode', () => {
     const AUTO_CONFIGURATION = { ...DEFAULT_INIT_CONFIGURATION }
     const MANUAL_CONFIGURATION = { ...AUTO_CONFIGURATION, trackViewsManually: true }
@@ -577,10 +715,10 @@ describe('rum public api', () => {
         rumPublicApi.init(AUTO_CONFIGURATION)
 
         expect(startViewSpy).toHaveBeenCalled()
-        expect(startViewSpy.calls.argsFor(0)[0]).toEqual('foo')
+        expect(startViewSpy.calls.argsFor(0)[0]).toEqual({ name: 'foo' })
         expect(startViewSpy.calls.argsFor(0)[1]).toEqual({
           relative: 10 as RelativeTime,
-          timeStamp: (jasmine.any(Number) as unknown) as TimeStamp,
+          timeStamp: jasmine.any(Number) as unknown as TimeStamp,
         })
       })
 
@@ -590,7 +728,7 @@ describe('rum public api', () => {
         rumPublicApi.startView('foo')
 
         expect(startViewSpy).toHaveBeenCalled()
-        expect(startViewSpy.calls.argsFor(0)[0]).toEqual('foo')
+        expect(startViewSpy.calls.argsFor(0)[0]).toEqual({ name: 'foo' })
         expect(startViewSpy.calls.argsFor(0)[1]).toBeUndefined()
         expect(displaySpy).not.toHaveBeenCalled()
       })
@@ -611,7 +749,7 @@ describe('rum public api', () => {
 
         rumPublicApi.init(MANUAL_CONFIGURATION)
         expect(startRumSpy).toHaveBeenCalled()
-        expect(startRumSpy.calls.argsFor(0)[4]).toEqual('foo')
+        expect(startRumSpy.calls.argsFor(0)[4]).toEqual({ name: 'foo' })
         expect(recorderApiOnRumStartSpy).toHaveBeenCalled()
         expect(startViewSpy).not.toHaveBeenCalled()
       })
@@ -623,7 +761,7 @@ describe('rum public api', () => {
 
         rumPublicApi.startView('foo')
         expect(startRumSpy).toHaveBeenCalled()
-        expect(startRumSpy.calls.argsFor(0)[4]).toEqual('foo')
+        expect(startRumSpy.calls.argsFor(0)[4]).toEqual({ name: 'foo' })
         expect(recorderApiOnRumStartSpy).toHaveBeenCalled()
         expect(startViewSpy).not.toHaveBeenCalled()
       })
@@ -634,10 +772,10 @@ describe('rum public api', () => {
         rumPublicApi.startView('bar')
 
         expect(startRumSpy).toHaveBeenCalled()
-        expect(startRumSpy.calls.argsFor(0)[4]).toEqual('foo')
+        expect(startRumSpy.calls.argsFor(0)[4]).toEqual({ name: 'foo' })
         expect(recorderApiOnRumStartSpy).toHaveBeenCalled()
         expect(startViewSpy).toHaveBeenCalled()
-        expect(startViewSpy.calls.argsFor(0)[0]).toEqual('bar')
+        expect(startViewSpy.calls.argsFor(0)[0]).toEqual({ name: 'bar' })
         expect(startViewSpy.calls.argsFor(0)[1]).toBeUndefined()
       })
 
@@ -732,5 +870,10 @@ describe('rum public api', () => {
       })
       expect(recorderApiOnRumStartSpy.calls.mostRecent().args[1].defaultPrivacyLevel).toBe(DefaultPrivacyLevel.MASK)
     })
+  })
+
+  it('should provide sdk version', () => {
+    const rumPublicApi = makeRumPublicApi(noopStartRum, noopRecorderApi)
+    expect(rumPublicApi.version).toBe('test')
   })
 })

@@ -1,11 +1,16 @@
-import { isIE } from '@datadog/browser-core'
+import { isIE, noop, resetExperimentalFeatures, updateExperimentalFeatures } from '@datadog/browser-core'
+
+import type { RumConfiguration } from '@datadog/browser-rum-core'
+import { STABLE_ATTRIBUTES, DEFAULT_PROGRAMMATIC_ACTION_NAME_ATTRIBUTE } from '@datadog/browser-rum-core'
 import {
   NodePrivacyLevel,
   PRIVACY_ATTR_NAME,
   PRIVACY_ATTR_VALUE_ALLOW,
   PRIVACY_ATTR_VALUE_HIDDEN,
+  PRIVACY_ATTR_VALUE_MASK,
   PRIVACY_ATTR_VALUE_MASK_USER_INPUT,
 } from '../../constants'
+import { isAdoptedStyleSheetsSupported } from '../../../../core/test/specHelper'
 import {
   HTML,
   AST_ALLOW,
@@ -14,25 +19,54 @@ import {
   AST_MASK_USER_INPUT,
   generateLeanSerializedDoc,
 } from '../../../test/htmlAst'
+import type { ElementNode, SerializedNodeWithId, TextNode } from '../../types'
+import { NodeType } from '../../types'
+import type { IsolatedDom } from '../../../../rum-core/test/createIsolatedDom'
+import { createIsolatedDom } from '../../../../rum-core/test/createIsolatedDom'
 import { hasSerializedNode } from './serializationUtils'
+import type { SerializationContext, SerializeOptions } from './serialize'
 import {
   serializeDocument,
   serializeNodeWithId,
-  SerializeOptions,
   serializeDocumentNode,
   serializeChildNodes,
   serializeAttribute,
+  SerializationContextStatus,
 } from './serialize'
 import { MAX_ATTRIBUTE_VALUE_CHAR_LENGTH } from './privacy'
-import { ElementNode, NodeType, SerializedNodeWithId, TextNode } from './types'
+import type { ElementsScrollPositions } from './elementsScrollPositions'
+import { createElementsScrollPositions } from './elementsScrollPositions'
+import type { ShadowRootCallBack, ShadowRootsController } from './shadowRootsController'
+import type { WithAdoptedStyleSheets } from './browser.types'
+
+const DEFAULT_CONFIGURATION = {} as RumConfiguration
+
+const DEFAULT_SHADOW_ROOT_CONTROLLER: ShadowRootsController = {
+  flush: noop,
+  stop: noop,
+  addShadowRoot: noop,
+  removeShadowRoot: noop,
+}
+
+const DEFAULT_SERIALIZATION_CONTEXT: SerializationContext = {
+  shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+  status: SerializationContextStatus.INITIAL_FULL_SNAPSHOT,
+  elementsScrollPositions: createElementsScrollPositions(),
+}
 
 const DEFAULT_OPTIONS: SerializeOptions = {
-  document,
   parentNodePrivacyLevel: NodePrivacyLevel.ALLOW,
+  serializationContext: DEFAULT_SERIALIZATION_CONTEXT,
+  configuration: DEFAULT_CONFIGURATION,
 }
 
 describe('serializeNodeWithId', () => {
   let sandbox: HTMLElement
+  let addShadowRootSpy: jasmine.Spy<ShadowRootCallBack>
+
+  beforeEach(() => {
+    addShadowRootSpy = jasmine.createSpy<ShadowRootCallBack>()
+  })
 
   beforeEach(() => {
     if (isIE()) {
@@ -44,19 +78,21 @@ describe('serializeNodeWithId', () => {
   })
 
   afterEach(() => {
+    resetExperimentalFeatures()
     sandbox.remove()
   })
 
   describe('document serialization', () => {
     it('serializes a document', () => {
-      const document = new DOMParser().parseFromString(`<!doctype html><html>foo</html>`, 'text/html')
-      expect(serializeDocument(document, NodePrivacyLevel.ALLOW)).toEqual({
+      const document = new DOMParser().parseFromString('<!doctype html><html>foo</html>', 'text/html')
+      expect(serializeDocument(document, DEFAULT_CONFIGURATION, DEFAULT_SERIALIZATION_CONTEXT)).toEqual({
         type: NodeType.Document,
         childNodes: [
           jasmine.objectContaining({ type: NodeType.DocumentType, name: 'html', publicId: '', systemId: '' }),
           jasmine.objectContaining({ type: NodeType.Element, tagName: 'html' }),
         ],
-        id: (jasmine.any(Number) as unknown) as number,
+        adoptedStyleSheets: undefined,
+        id: jasmine.any(Number) as unknown as number,
       })
     })
   })
@@ -69,7 +105,7 @@ describe('serializeNodeWithId', () => {
         attributes: {},
         isSVG: undefined,
         childNodes: [],
-        id: (jasmine.any(Number) as unknown) as number,
+        id: jasmine.any(Number) as unknown as number,
       })
     })
 
@@ -87,7 +123,7 @@ describe('serializeNodeWithId', () => {
         },
         isSVG: undefined,
         childNodes: [],
-        id: (jasmine.any(Number) as unknown) as number,
+        id: jasmine.any(Number) as unknown as number,
       })
     })
 
@@ -113,26 +149,103 @@ describe('serializeNodeWithId', () => {
       })
     })
 
-    it('serializes scroll position', () => {
-      const element = document.createElement('div')
-      Object.assign(element.style, { width: '100px', height: '100px', overflow: 'scroll' })
-      const inner = document.createElement('div')
-      Object.assign(inner.style, { width: '200px', height: '200px' })
-      element.appendChild(inner)
-      sandbox.appendChild(element)
-      element.scrollBy(10, 20)
+    describe('rr scroll attributes', () => {
+      let element: HTMLDivElement
+      let elementsScrollPositions: ElementsScrollPositions
 
-      expect((serializeNodeWithId(element, DEFAULT_OPTIONS)! as ElementNode).attributes).toEqual(
-        jasmine.objectContaining({
-          rr_scrollTop: 20,
-          rr_scrollLeft: 10,
-        })
-      )
+      beforeEach(() => {
+        element = document.createElement('div')
+        Object.assign(element.style, { width: '100px', height: '100px', overflow: 'scroll' })
+        const inner = document.createElement('div')
+        Object.assign(inner.style, { width: '200px', height: '200px' })
+        element.appendChild(inner)
+        sandbox.appendChild(element)
+        element.scrollBy(10, 20)
+
+        elementsScrollPositions = createElementsScrollPositions()
+      })
+
+      it('should be retrieved from attributes during initial full snapshot', () => {
+        const serializedAttributes = (
+          serializeNodeWithId(element, {
+            ...DEFAULT_OPTIONS,
+            serializationContext: {
+              shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+              status: SerializationContextStatus.INITIAL_FULL_SNAPSHOT,
+              elementsScrollPositions,
+            },
+          }) as ElementNode
+        ).attributes
+
+        expect(serializedAttributes).toEqual(
+          jasmine.objectContaining({
+            rr_scrollLeft: 10,
+            rr_scrollTop: 20,
+          })
+        )
+        expect(elementsScrollPositions.get(element)).toEqual({ scrollLeft: 10, scrollTop: 20 })
+      })
+
+      it('should not be retrieved from attributes during subsequent full snapshot', () => {
+        const serializedAttributes = (
+          serializeNodeWithId(element, {
+            ...DEFAULT_OPTIONS,
+            serializationContext: {
+              shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+              status: SerializationContextStatus.SUBSEQUENT_FULL_SNAPSHOT,
+              elementsScrollPositions,
+            },
+          }) as ElementNode
+        ).attributes
+
+        expect(serializedAttributes.rr_scrollLeft).toBeUndefined()
+        expect(serializedAttributes.rr_scrollTop).toBeUndefined()
+        expect(elementsScrollPositions.get(element)).toBeUndefined()
+      })
+
+      it('should be retrieved from elementsScrollPositions during subsequent full snapshot', () => {
+        elementsScrollPositions.set(element, { scrollLeft: 10, scrollTop: 20 })
+
+        const serializedAttributes = (
+          serializeNodeWithId(element, {
+            ...DEFAULT_OPTIONS,
+            serializationContext: {
+              shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+              status: SerializationContextStatus.SUBSEQUENT_FULL_SNAPSHOT,
+              elementsScrollPositions,
+            },
+          }) as ElementNode
+        ).attributes
+
+        expect(serializedAttributes).toEqual(
+          jasmine.objectContaining({
+            rr_scrollLeft: 10,
+            rr_scrollTop: 20,
+          })
+        )
+      })
+
+      it('should not be retrieved during mutation', () => {
+        elementsScrollPositions.set(element, { scrollLeft: 10, scrollTop: 20 })
+
+        const serializedAttributes = (
+          serializeNodeWithId(element, {
+            ...DEFAULT_OPTIONS,
+            serializationContext: {
+              shadowRootsController: DEFAULT_SHADOW_ROOT_CONTROLLER,
+              status: SerializationContextStatus.MUTATION,
+            },
+          }) as ElementNode
+        ).attributes
+
+        expect(serializedAttributes.rr_scrollLeft).toBeUndefined()
+        expect(serializedAttributes.rr_scrollTop).toBeUndefined()
+      })
     })
 
     it('ignores white space in <head>', () => {
       const head = document.createElement('head')
-      head.innerHTML = `  <title>  foo </title>  `
+      head.innerHTML = '  <title>  foo </title>  '
 
       expect((serializeNodeWithId(head, DEFAULT_OPTIONS)! as ElementNode).childNodes).toEqual([
         jasmine.objectContaining({
@@ -304,6 +417,108 @@ describe('serializeNodeWithId', () => {
         expect((serializeNodeWithId(button, DEFAULT_OPTIONS)! as ElementNode).attributes.value).toEqual('toto')
       })
     })
+
+    describe('input privacy mode mask', () => {
+      it('applies mask for <input placeholder="someValue" /> value', () => {
+        const input = document.createElement('input')
+        input.placeholder = 'someValue'
+        input.setAttribute(PRIVACY_ATTR_NAME, PRIVACY_ATTR_VALUE_MASK)
+
+        expect((serializeNodeWithId(input, DEFAULT_OPTIONS)! as ElementNode).attributes.placeholder).toEqual('***')
+      })
+    })
+
+    it('serializes a shadow host', () => {
+      updateExperimentalFeatures(['record_shadow_dom'])
+      const div = document.createElement('div')
+      div.attachShadow({ mode: 'open' })
+      expect(serializeNodeWithId(div, DEFAULT_OPTIONS)).toEqual({
+        type: NodeType.Element,
+        tagName: 'div',
+        attributes: {},
+        isSVG: undefined,
+        childNodes: [
+          {
+            type: NodeType.DocumentFragment,
+            isShadowRoot: true,
+            childNodes: [],
+            id: jasmine.any(Number) as unknown as number,
+            adoptedStyleSheets: undefined,
+          },
+        ],
+        id: jasmine.any(Number) as unknown as number,
+      })
+    })
+
+    it('serializes a shadow host with children', () => {
+      updateExperimentalFeatures(['record_shadow_dom'])
+      const div = document.createElement('div')
+      div.attachShadow({ mode: 'open' })
+      div.shadowRoot!.appendChild(document.createElement('hr'))
+
+      const options: SerializeOptions = {
+        ...DEFAULT_OPTIONS,
+        serializationContext: {
+          ...DEFAULT_SERIALIZATION_CONTEXT,
+          shadowRootsController: {
+            ...DEFAULT_SHADOW_ROOT_CONTROLLER,
+            addShadowRoot: addShadowRootSpy,
+          },
+        },
+      }
+      expect(serializeNodeWithId(div, options)).toEqual({
+        type: NodeType.Element,
+        tagName: 'div',
+        attributes: {},
+        isSVG: undefined,
+        childNodes: [
+          {
+            type: NodeType.DocumentFragment,
+            isShadowRoot: true,
+            adoptedStyleSheets: undefined,
+            childNodes: [
+              {
+                type: NodeType.Element,
+                tagName: 'hr',
+                attributes: {},
+                isSVG: undefined,
+                childNodes: [],
+                id: jasmine.any(Number) as unknown as number,
+              },
+            ],
+            id: jasmine.any(Number) as unknown as number,
+          },
+        ],
+        id: jasmine.any(Number) as unknown as number,
+      })
+      expect(addShadowRootSpy).toHaveBeenCalledWith(div.shadowRoot!)
+    })
+
+    it('does not serialize shadow host children when the experimental flag is missing', () => {
+      const div = document.createElement('div')
+      div.attachShadow({ mode: 'open' })
+      div.shadowRoot!.appendChild(document.createElement('hr'))
+
+      const options: SerializeOptions = {
+        ...DEFAULT_OPTIONS,
+        serializationContext: {
+          ...DEFAULT_SERIALIZATION_CONTEXT,
+          shadowRootsController: {
+            ...DEFAULT_SHADOW_ROOT_CONTROLLER,
+            addShadowRoot: addShadowRootSpy,
+          },
+        },
+      }
+      expect(serializeNodeWithId(div, options)).toEqual({
+        type: NodeType.Element,
+        tagName: 'div',
+        attributes: {},
+        isSVG: undefined,
+        childNodes: [],
+        id: jasmine.any(Number) as unknown as number,
+      })
+      expect(addShadowRootSpy).not.toHaveBeenCalled()
+    })
   })
 
   describe('text nodes serialization', () => {
@@ -314,7 +529,7 @@ describe('serializeNodeWithId', () => {
       parentEl.appendChild(textNode)
       expect(serializeNodeWithId(textNode, DEFAULT_OPTIONS)).toEqual({
         type: NodeType.Text,
-        id: (jasmine.any(Number) as unknown) as number,
+        id: jasmine.any(Number) as unknown as number,
         isStyle: undefined,
         textContent: 'foo',
       })
@@ -344,7 +559,7 @@ describe('serializeNodeWithId', () => {
       const xmlDocument = new DOMParser().parseFromString('<root></root>', 'text/xml')
       expect(serializeNodeWithId(xmlDocument.createCDATASection('foo'), DEFAULT_OPTIONS)).toEqual({
         type: NodeType.CDATA,
-        id: (jasmine.any(Number) as unknown) as number,
+        id: jasmine.any(Number) as unknown as number,
         textContent: '',
       })
     })
@@ -436,7 +651,6 @@ describe('serializeNodeWithId', () => {
         const privateWordMatchCount = innerText.match(/private/g)?.length
         expect(privateWordMatchCount).toBe(10)
         expect(innerText).toBe(
-          // eslint-disable-next-line max-len
           '  \n      .example {content: "anything";}\n       private title \n \n     hello private world \n     Loreum ipsum private text \n     hello private world \n     \n      Click https://private.com/path/nested?query=param#hash\n     \n      \n     \n       private option A \n       private option B \n       private option C \n     \n      \n      \n      \n     inputFoo label \n\n      \n\n           Loreum Ipsum private ...\n     \n\n     editable private div \n'
         )
       })
@@ -478,14 +692,48 @@ describe('serializeDocumentNode handles', function testAllowDomTree() {
     }
   })
 
+  describe('with dynamic stylesheet', () => {
+    let isolatedDom: IsolatedDom
+
+    beforeEach(() => {
+      isolatedDom = createIsolatedDom()
+    })
+
+    afterEach(() => {
+      isolatedDom.clear()
+    })
+
+    it('serializes a document with adoptedStyleSheets', () => {
+      if (!isAdoptedStyleSheetsSupported()) {
+        pending('no adoptedStyleSheets support')
+      }
+      const styleSheet = new isolatedDom.window.CSSStyleSheet()
+      styleSheet.insertRule('div { width: 100%; }')
+      ;(isolatedDom.document as WithAdoptedStyleSheets).adoptedStyleSheets = [styleSheet]
+      expect(serializeDocument(isolatedDom.document, DEFAULT_CONFIGURATION, DEFAULT_SERIALIZATION_CONTEXT)).toEqual({
+        type: NodeType.Document,
+        childNodes: [jasmine.objectContaining({ type: NodeType.Element, tagName: 'html' })],
+        adoptedStyleSheets: [
+          {
+            cssRules: ['div { width: 100%; }'],
+            disabled: undefined,
+            media: undefined,
+          },
+        ],
+        id: jasmine.any(Number) as unknown as number,
+      })
+    })
+  })
+
   it('a masked DOM Document itself is still serialized ', () => {
-    const serializeOptionsMask = {
-      document,
+    const serializeOptionsMask: SerializeOptions = {
+      ...DEFAULT_OPTIONS,
       parentNodePrivacyLevel: NodePrivacyLevel.MASK,
     }
     expect(serializeDocumentNode(document, serializeOptionsMask)).toEqual({
       type: NodeType.Document,
       childNodes: serializeChildNodes(document, serializeOptionsMask),
+      adoptedStyleSheets: undefined,
     })
   })
 
@@ -519,6 +767,12 @@ describe('serializeDocumentNode handles', function testAllowDomTree() {
 })
 
 describe('serializeAttribute ', () => {
+  beforeEach(() => {
+    if (isIE()) {
+      pending('IE not supported')
+    }
+  })
+
   it('truncates "data:" URIs after long string length', () => {
     const node = document.createElement('p')
 
@@ -531,12 +785,73 @@ describe('serializeAttribute ', () => {
     node.setAttribute('test-truncate', exceededAttributeValue)
     node.setAttribute('test-ignored', ignoredAttributeValue)
 
-    expect(serializeAttribute(node, NodePrivacyLevel.ALLOW, 'test-okay')).toBe(maxAttributeValue)
-    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-okay')).toBe(maxAttributeValue)
+    expect(serializeAttribute(node, NodePrivacyLevel.ALLOW, 'test-okay', DEFAULT_CONFIGURATION)).toBe(maxAttributeValue)
+    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-okay', DEFAULT_CONFIGURATION)).toBe(maxAttributeValue)
 
-    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-ignored')).toBe(ignoredAttributeValue)
+    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-ignored', DEFAULT_CONFIGURATION)).toBe(
+      ignoredAttributeValue
+    )
 
-    expect(serializeAttribute(node, NodePrivacyLevel.ALLOW, 'test-truncate')).toBe('data:truncated')
-    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-truncate')).toBe('data:truncated')
+    expect(serializeAttribute(node, NodePrivacyLevel.ALLOW, 'test-truncate', DEFAULT_CONFIGURATION)).toBe(
+      'data:truncated'
+    )
+    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'test-truncate', DEFAULT_CONFIGURATION)).toBe(
+      'data:truncated'
+    )
+  })
+
+  it('does not mask the privacy attribute', () => {
+    const node = document.createElement('div')
+    node.setAttribute(PRIVACY_ATTR_NAME, NodePrivacyLevel.MASK)
+    expect(serializeAttribute(node, NodePrivacyLevel.MASK, PRIVACY_ATTR_NAME, DEFAULT_CONFIGURATION)).toBe('mask')
+  })
+
+  it('masks data attributes', () => {
+    const node = document.createElement('div')
+    node.setAttribute('data-foo', 'bar')
+    expect(serializeAttribute(node, NodePrivacyLevel.MASK, 'data-foo', DEFAULT_CONFIGURATION)).toBe('***')
+  })
+
+  describe('attributes used to generate CSS selectors', () => {
+    it('does not mask the default programmatic action name attributes', () => {
+      const node = document.createElement('div')
+      node.setAttribute(DEFAULT_PROGRAMMATIC_ACTION_NAME_ATTRIBUTE, 'foo')
+      expect(
+        serializeAttribute(
+          node,
+          NodePrivacyLevel.MASK,
+          DEFAULT_PROGRAMMATIC_ACTION_NAME_ATTRIBUTE,
+          DEFAULT_CONFIGURATION
+        )
+      ).toBe('foo')
+    })
+
+    it('does not mask the user-supplied programmatic action name attributes when it is a data attribute', () => {
+      const node = document.createElement('div')
+      node.setAttribute('data-my-custom-action-name', 'foo')
+      expect(
+        serializeAttribute(node, NodePrivacyLevel.MASK, 'data-my-custom-action-name', {
+          ...DEFAULT_CONFIGURATION,
+          actionNameAttribute: 'data-my-custom-action-name',
+        })
+      ).toBe('foo')
+    })
+
+    it('does not mask the user-supplied programmatic action name attributes when it not a data attribute', () => {
+      const node = document.createElement('div')
+      node.setAttribute('my-custom-action-name', 'foo')
+      expect(
+        serializeAttribute(node, NodePrivacyLevel.MASK, 'my-custom-action-name', {
+          ...DEFAULT_CONFIGURATION,
+          actionNameAttribute: 'my-custom-action-name',
+        })
+      ).toBe('foo')
+    })
+
+    it('does not mask other attributes used to generate CSS selectors', () => {
+      const node = document.createElement('div')
+      node.setAttribute(STABLE_ATTRIBUTES[0], 'foo')
+      expect(serializeAttribute(node, NodePrivacyLevel.MASK, STABLE_ATTRIBUTES[0], DEFAULT_CONFIGURATION)).toBe('foo')
+    })
   })
 })

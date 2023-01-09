@@ -1,21 +1,23 @@
+import type { Duration, RelativeTime, TimeStamp } from '@datadog/browser-core'
 import {
+  dateNow,
+  assign,
   addEventListeners,
   DOM_EVENT,
-  Duration,
   getRelativeTime,
   isNumber,
   monitor,
   relativeNow,
-  RelativeTime,
   runOnReadyState,
-  TimeStamp,
 } from '@datadog/browser-core'
-import { RumConfiguration } from '../domain/configuration'
-import { LifeCycle, LifeCycleEventType } from '../domain/lifeCycle'
+
+import type { RumConfiguration } from '../domain/configuration'
+import type { LifeCycle } from '../domain/lifeCycle'
+import { LifeCycleEventType } from '../domain/lifeCycle'
 import { FAKE_INITIAL_DOCUMENT, isAllowedRequestUrl } from '../domain/rumEventsCollection/resource/resourceUtils'
 
 import { getDocumentTraceId } from '../domain/tracing/getDocumentTraceId'
-import { PerformanceEntryRepresentation } from '../domainContext.types'
+import type { PerformanceEntryRepresentation } from '../domainContext.types'
 
 export interface RumPerformanceResourceTiming {
   entryType: 'resource'
@@ -57,6 +59,7 @@ export interface RumPerformanceNavigationTiming {
   domContentLoadedEventEnd: RelativeTime
   domInteractive: RelativeTime
   loadEventEnd: RelativeTime
+  responseStart: RelativeTime
 }
 
 export interface RumLargestContentfulPaintTiming {
@@ -99,22 +102,21 @@ export function supportPerformanceTimingEvent(entryType: string) {
   )
 }
 
-export function supportPerformanceEntry() {
-  // Safari 10 doesn't support PerformanceEntry
-  return typeof PerformanceEntry === 'function'
-}
-
 export function startPerformanceCollection(lifeCycle: LifeCycle, configuration: RumConfiguration) {
   retrieveInitialDocumentResourceTiming((timing) => {
-    handleRumPerformanceEntry(lifeCycle, configuration, timing)
+    handleRumPerformanceEntries(lifeCycle, configuration, [timing])
   })
 
   if (supportPerformanceObject()) {
-    handlePerformanceEntries(lifeCycle, configuration, performance.getEntries())
+    const performanceEntries = performance.getEntries()
+    // Because the performance entry list can be quite large
+    // delay the computation to prevent the SDK from blocking the main thread on init
+    setTimeout(monitor(() => handleRumPerformanceEntries(lifeCycle, configuration, performanceEntries)))
   }
+
   if (window.PerformanceObserver) {
     const handlePerformanceEntryList = monitor((entries: PerformanceObserverEntryList) =>
-      handlePerformanceEntries(lifeCycle, configuration, entries.getEntries())
+      handleRumPerformanceEntries(lifeCycle, configuration, entries.getEntries())
     )
     const mainEntries = ['resource', 'navigation', 'longtask', 'paint']
     const experimentalEntries = ['largest-contentful-paint', 'first-input', 'layout-shift']
@@ -128,7 +130,8 @@ export function startPerformanceCollection(lifeCycle: LifeCycle, configuration: 
         observer.observe({ type, buffered: true })
       })
     } catch (e) {
-      // Some old browser versions don't support PerformanceObserver without entryTypes option
+      // Some old browser versions (ex: chrome 67) don't support the PerformanceObserver type and buffered options
+      // In these cases, fallback to PerformanceObserver with entryTypes
       mainEntries.push(...experimentalEntries)
     }
 
@@ -144,12 +147,12 @@ export function startPerformanceCollection(lifeCycle: LifeCycle, configuration: 
   }
   if (!supportPerformanceTimingEvent('navigation')) {
     retrieveNavigationTiming((timing) => {
-      handleRumPerformanceEntry(lifeCycle, configuration, timing)
+      handleRumPerformanceEntries(lifeCycle, configuration, [timing])
     })
   }
   if (!supportPerformanceTimingEvent('first-input')) {
     retrieveFirstInputTiming((timing) => {
-      handleRumPerformanceEntry(lifeCycle, configuration, timing)
+      handleRumPerformanceEntries(lifeCycle, configuration, [timing])
     })
   }
 }
@@ -165,17 +168,19 @@ export function retrieveInitialDocumentResourceTiming(callback: (timing: RumPerf
     }
     if (supportPerformanceTimingEvent('navigation') && performance.getEntriesByType('navigation').length > 0) {
       const navigationEntry = performance.getEntriesByType('navigation')[0]
-      timing = { ...navigationEntry.toJSON(), ...forcedAttributes }
+      timing = assign(navigationEntry.toJSON(), forcedAttributes)
     } else {
       const relativePerformanceTiming = computeRelativePerformanceTiming()
-      timing = {
-        ...relativePerformanceTiming,
-        decodedBodySize: 0,
-        duration: relativePerformanceTiming.responseEnd,
-        name: window.location.href,
-        startTime: 0 as RelativeTime,
-        ...forcedAttributes,
-      }
+      timing = assign(
+        relativePerformanceTiming,
+        {
+          decodedBodySize: 0,
+          duration: relativePerformanceTiming.responseEnd,
+          name: window.location.href,
+          startTime: 0 as RelativeTime,
+        },
+        forcedAttributes
+      )
     }
     callback(timing)
   })
@@ -183,10 +188,11 @@ export function retrieveInitialDocumentResourceTiming(callback: (timing: RumPerf
 
 function retrieveNavigationTiming(callback: (timing: RumPerformanceNavigationTiming) => void) {
   function sendFakeTiming() {
-    callback({
-      ...computeRelativePerformanceTiming(),
-      entryType: 'navigation',
-    })
+    callback(
+      assign(computeRelativePerformanceTiming(), {
+        entryType: 'navigation' as const,
+      })
+    )
   }
 
   runOnReadyState('complete', () => {
@@ -200,7 +206,7 @@ function retrieveNavigationTiming(callback: (timing: RumPerformanceNavigationTim
  * https://github.com/GoogleChrome/web-vitals/blob/master/src/lib/polyfills/firstInputPolyfill.ts
  */
 function retrieveFirstInputTiming(callback: (timing: RumFirstInputTiming) => void) {
-  const startTimeStamp = Date.now()
+  const startTimeStamp = dateNow()
   let timingSent = false
 
   const { stop: removeEventListeners } = addEventListeners(
@@ -259,7 +265,7 @@ function retrieveFirstInputTiming(callback: (timing: RumFirstInputTiming) => voi
       // - https://github.com/GoogleChromeLabs/first-input-delay/issues/6
       // - https://github.com/GoogleChromeLabs/first-input-delay/issues/7
       const delay = timing.processingStart - timing.startTime
-      if (delay >= 0 && delay < Date.now() - startTimeStamp) {
+      if (delay >= 0 && delay < dateNow() - startTimeStamp) {
         callback(timing)
       }
     }
@@ -276,7 +282,6 @@ function computeRelativePerformanceTiming() {
   for (const key in timing) {
     if (isNumber(timing[key as keyof PerformanceTiming])) {
       const numberKey = key as keyof RelativePerformanceTiming
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
       const timingElement = timing[numberKey] as TimeStamp
       result[numberKey] = timingElement === 0 ? (0 as RelativeTime) : getRelativeTime(timingElement)
     }
@@ -284,9 +289,13 @@ function computeRelativePerformanceTiming() {
   return result as RelativePerformanceTiming
 }
 
-function handlePerformanceEntries(lifeCycle: LifeCycle, configuration: RumConfiguration, entries: PerformanceEntry[]) {
-  entries.forEach((entry) => {
-    if (
+function handleRumPerformanceEntries(
+  lifeCycle: LifeCycle,
+  configuration: RumConfiguration,
+  entries: Array<PerformanceEntry | RumPerformanceEntry>
+) {
+  const rumPerformanceEntries = entries.filter(
+    (entry) =>
       entry.entryType === 'resource' ||
       entry.entryType === 'navigation' ||
       entry.entryType === 'paint' ||
@@ -294,18 +303,15 @@ function handlePerformanceEntries(lifeCycle: LifeCycle, configuration: RumConfig
       entry.entryType === 'largest-contentful-paint' ||
       entry.entryType === 'first-input' ||
       entry.entryType === 'layout-shift'
-    ) {
-      handleRumPerformanceEntry(lifeCycle, configuration, (entry as unknown) as RumPerformanceEntry)
-    }
-  })
-}
+  ) as RumPerformanceEntry[]
 
-function handleRumPerformanceEntry(lifeCycle: LifeCycle, configuration: RumConfiguration, entry: RumPerformanceEntry) {
-  if (isIncompleteNavigation(entry) || isForbiddenResource(configuration, entry)) {
-    return
+  const rumAllowedPerformanceEntries = rumPerformanceEntries.filter(
+    (entry) => !isIncompleteNavigation(entry) && !isForbiddenResource(configuration, entry)
+  )
+
+  if (rumAllowedPerformanceEntries.length) {
+    lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRIES_COLLECTED, rumAllowedPerformanceEntries)
   }
-
-  lifeCycle.notify(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, entry)
 }
 
 function isIncompleteNavigation(entry: RumPerformanceEntry) {

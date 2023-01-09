@@ -1,3 +1,4 @@
+import type { RelativeTime } from '@datadog/browser-core'
 import {
   COOKIE_ACCESS_DELAY,
   getCookie,
@@ -5,11 +6,11 @@ import {
   setCookie,
   stopSessionManager,
   ONE_SECOND,
-  RelativeTime,
 } from '@datadog/browser-core'
-import { Clock, mockClock } from '../../../core/test/specHelper'
+import type { Clock } from '../../../core/test/specHelper'
+import { mockClock } from '../../../core/test/specHelper'
 
-import { LogsConfiguration } from './configuration'
+import type { LogsConfiguration } from './configuration'
 import {
   LOGS_SESSION_KEY,
   LoggerTrackingType,
@@ -19,7 +20,7 @@ import {
 
 describe('logs session manager', () => {
   const DURATION = 123456
-  const configuration: Partial<LogsConfiguration> = { sampleRate: 0.5 }
+  const configuration: Partial<LogsConfiguration> = { sessionSampleRate: 0.5 }
   let clock: Clock
   let tracked: boolean
 
@@ -120,11 +121,11 @@ describe('logs session manager', () => {
 
 describe('logger session stub', () => {
   it('isTracked is computed at each init and getId is always undefined', () => {
-    const firstLogsSessionManager = startLogsSessionManagerStub({ sampleRate: 100 } as LogsConfiguration)
+    const firstLogsSessionManager = startLogsSessionManagerStub({ sessionSampleRate: 100 } as LogsConfiguration)
     expect(firstLogsSessionManager.findTrackedSession()).toBeDefined()
     expect(firstLogsSessionManager.findTrackedSession()!.id).toBeUndefined()
 
-    const secondLogsSessionManager = startLogsSessionManagerStub({ sampleRate: 0 } as LogsConfiguration)
+    const secondLogsSessionManager = startLogsSessionManagerStub({ sessionSampleRate: 0 } as LogsConfiguration)
     expect(secondLogsSessionManager.findTrackedSession()).toBeUndefined()
   })
 })

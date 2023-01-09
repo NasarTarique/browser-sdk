@@ -1,62 +1,99 @@
-import { combine, InternalMonitoring, canUseEventBridge, Observable } from '@datadog/browser-core'
+import type { Observable, TelemetryEvent, RawError } from '@datadog/browser-core'
+import {
+  sendToExtension,
+  createPageExitObservable,
+  TelemetryService,
+  addTelemetryConfiguration,
+  startTelemetry,
+  canUseEventBridge,
+  getEventBridge,
+} from '@datadog/browser-core'
 import { createDOMMutationObservable } from '../browser/domMutationObservable'
 import { startPerformanceCollection } from '../browser/performanceCollection'
 import { startRumAssembly } from '../domain/assembly'
-import { startForegroundContexts } from '../domain/foregroundContexts'
-import { startInternalContext } from '../domain/internalContext'
-import { LifeCycle } from '../domain/lifeCycle'
-import { startParentContexts } from '../domain/parentContexts'
+import { startForegroundContexts } from '../domain/contexts/foregroundContexts'
+import { startInternalContext } from '../domain/contexts/internalContext'
+import { LifeCycle, LifeCycleEventType } from '../domain/lifeCycle'
+import { startViewContexts } from '../domain/contexts/viewContexts'
 import { startRequestCollection } from '../domain/requestCollection'
 import { startActionCollection } from '../domain/rumEventsCollection/action/actionCollection'
 import { startErrorCollection } from '../domain/rumEventsCollection/error/errorCollection'
 import { startLongTaskCollection } from '../domain/rumEventsCollection/longTask/longTaskCollection'
 import { startResourceCollection } from '../domain/rumEventsCollection/resource/resourceCollection'
 import { startViewCollection } from '../domain/rumEventsCollection/view/viewCollection'
-import { RumSessionManager, startRumSessionManager, startRumSessionManagerStub } from '../domain/rumSessionManager'
-import { CommonContext } from '../rawRumEvent.types'
+import type { RumSessionManager } from '../domain/rumSessionManager'
+import { startRumSessionManager, startRumSessionManagerStub } from '../domain/rumSessionManager'
+import type { CommonContext } from '../rawRumEvent.types'
 import { startRumBatch } from '../transport/startRumBatch'
 import { startRumEventBridge } from '../transport/startRumEventBridge'
-import { startUrlContexts } from '../domain/urlContexts'
-import { createLocationChangeObservable, LocationChange } from '../browser/locationChangeObservable'
-import { RumConfiguration } from '../domain/configuration'
-import { RecorderApi } from './rumPublicApi'
+import { startUrlContexts } from '../domain/contexts/urlContexts'
+import type { LocationChange } from '../browser/locationChangeObservable'
+import { createLocationChangeObservable } from '../browser/locationChangeObservable'
+import type { RumConfiguration, RumInitConfiguration } from '../domain/configuration'
+import { serializeRumConfiguration } from '../domain/configuration'
+import type { ViewOptions } from '../domain/rumEventsCollection/view/trackViews'
+import { startFeatureFlagContexts } from '../domain/contexts/featureFlagContext'
+import type { RecorderApi } from './rumPublicApi'
 
 export function startRum(
+  initConfiguration: RumInitConfiguration,
   configuration: RumConfiguration,
-  internalMonitoring: InternalMonitoring,
   getCommonContext: () => CommonContext,
   recorderApi: RecorderApi,
-  initialViewName?: string
+  initialViewOptions?: ViewOptions
 ) {
   const lifeCycle = new LifeCycle()
+
+  lifeCycle.subscribe(LifeCycleEventType.RUM_EVENT_COLLECTED, (event) => sendToExtension('rum', event))
+
+  const telemetry = startRumTelemetry(configuration)
+  telemetry.setContextProvider(() => ({
+    application: {
+      id: configuration.applicationId,
+    },
+    session: {
+      id: session.findTrackedSession()?.id,
+    },
+    view: {
+      id: viewContexts.findView()?.id,
+    },
+    action: {
+      id: actionContexts.findActionId(),
+    },
+  }))
+
+  const reportError = (error: RawError) => {
+    lifeCycle.notify(LifeCycleEventType.RAW_ERROR_COLLECTED, { error })
+  }
+  if (!canUseEventBridge()) {
+    const pageExitObservable = createPageExitObservable()
+    pageExitObservable.subscribe((event) => {
+      lifeCycle.notify(LifeCycleEventType.PAGE_EXITED, event)
+    })
+    startRumBatch(configuration, lifeCycle, telemetry.observable, reportError, pageExitObservable)
+  } else {
+    startRumEventBridge(lifeCycle)
+  }
+
   const session = !canUseEventBridge() ? startRumSessionManager(configuration, lifeCycle) : startRumSessionManagerStub()
   const domMutationObservable = createDOMMutationObservable()
   const locationChangeObservable = createLocationChangeObservable(location)
 
-  internalMonitoring.setExternalContextProvider(() =>
-    combine(
-      {
-        application_id: configuration.applicationId,
-        session: {
-          id: session.findTrackedSession()?.id,
-        },
-      },
-      parentContexts.findView(),
-      { view: { name: null } }
+  const { viewContexts, foregroundContexts, featureFlagContexts, urlContexts, actionContexts, addAction } =
+    startRumEventCollection(
+      lifeCycle,
+      configuration,
+      location,
+      session,
+      locationChangeObservable,
+      domMutationObservable,
+      getCommonContext,
+      reportError
     )
-  )
-
-  const { parentContexts, foregroundContexts, urlContexts } = startRumEventCollection(
-    lifeCycle,
-    configuration,
-    location,
-    session,
-    locationChangeObservable,
-    getCommonContext
-  )
+  addTelemetryConfiguration(serializeRumConfiguration(initConfiguration))
 
   startLongTaskCollection(lifeCycle, session)
-  startResourceCollection(lifeCycle)
+  startResourceCollection(lifeCycle, configuration, session)
   const { addTiming, startView } = startViewCollection(
     lifeCycle,
     configuration,
@@ -64,27 +101,43 @@ export function startRum(
     domMutationObservable,
     locationChangeObservable,
     foregroundContexts,
+    featureFlagContexts,
     recorderApi,
-    initialViewName
+    initialViewOptions
   )
-  const { addError } = startErrorCollection(lifeCycle, foregroundContexts)
-  const { addAction } = startActionCollection(lifeCycle, domMutationObservable, configuration, foregroundContexts)
+  const { addError } = startErrorCollection(lifeCycle, foregroundContexts, featureFlagContexts)
 
   startRequestCollection(lifeCycle, configuration, session)
   startPerformanceCollection(lifeCycle, configuration)
 
-  const internalContext = startInternalContext(configuration.applicationId, session, parentContexts, urlContexts)
+  const internalContext = startInternalContext(
+    configuration.applicationId,
+    session,
+    viewContexts,
+    actionContexts,
+    urlContexts
+  )
 
   return {
     addAction,
     addError,
     addTiming,
+    addFeatureFlagEvaluation: featureFlagContexts.addFeatureFlagEvaluation,
     startView,
     lifeCycle,
-    parentContexts,
+    viewContexts,
     session,
     getInternalContext: internalContext.get,
   }
+}
+
+function startRumTelemetry(configuration: RumConfiguration) {
+  const telemetry = startTelemetry(TelemetryService.RUM, configuration)
+  if (canUseEventBridge()) {
+    const bridge = getEventBridge<'internal_telemetry', TelemetryEvent>()!
+    telemetry.observable.subscribe((event) => bridge.send('internal_telemetry', event))
+  }
+  return telemetry
 }
 
 export function startRumEventCollection(
@@ -93,31 +146,42 @@ export function startRumEventCollection(
   location: Location,
   sessionManager: RumSessionManager,
   locationChangeObservable: Observable<LocationChange>,
-  getCommonContext: () => CommonContext
+  domMutationObservable: Observable<void>,
+  getCommonContext: () => CommonContext,
+  reportError: (error: RawError) => void
 ) {
-  const parentContexts = startParentContexts(lifeCycle)
+  const viewContexts = startViewContexts(lifeCycle)
   const urlContexts = startUrlContexts(lifeCycle, locationChangeObservable, location)
+  const featureFlagContexts = startFeatureFlagContexts(lifeCycle)
+
   const foregroundContexts = startForegroundContexts()
+  const { addAction, actionContexts } = startActionCollection(
+    lifeCycle,
+    domMutationObservable,
+    configuration,
+    foregroundContexts
+  )
 
-  let stopBatch: () => void
-
-  if (canUseEventBridge()) {
-    startRumEventBridge(lifeCycle)
-  } else {
-    ;({ stop: stopBatch } = startRumBatch(configuration, lifeCycle))
-  }
-
-  startRumAssembly(configuration, lifeCycle, sessionManager, parentContexts, urlContexts, getCommonContext)
+  startRumAssembly(
+    configuration,
+    lifeCycle,
+    sessionManager,
+    viewContexts,
+    urlContexts,
+    actionContexts,
+    getCommonContext,
+    reportError
+  )
 
   return {
-    parentContexts,
+    viewContexts,
     foregroundContexts,
     urlContexts,
+    featureFlagContexts,
+    addAction,
+    actionContexts,
     stop: () => {
-      // prevent batch from previous tests to keep running and send unwanted requests
-      // could be replaced by stopping all the component when they will all have a stop method
-      stopBatch?.()
-      parentContexts.stop()
+      viewContexts.stop()
       foregroundContexts.stop()
     },
   }
