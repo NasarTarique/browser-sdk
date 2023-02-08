@@ -69,7 +69,7 @@ function createFetchObservable() {
 }
 
 function beforeSend(observable: Observable<FetchContext>, input: RequestInfo, init?: RequestInit) {
-  const method = (init && init.method) || (typeof input === 'object' && input.method) || 'GET'
+  const method = (init && init.method) || (typeof input === 'object' && input !== null && input.method) || 'GET'
   const url = normalizeUrl((typeof input === 'object' && input.url) || (input as string))
   const startClocks = clocksNow()
 
